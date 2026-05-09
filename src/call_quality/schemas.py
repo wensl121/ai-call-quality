@@ -123,11 +123,16 @@ class ExtractedQuestions(BaseModel):
     questions: list[ExtractedQuestion] = Field(default_factory=list)
 
 
-class ScoringOutput(BaseModel):
-    """规则打分节点的输出（同时产 hot_words / business_words / should_say / should_not_say）。"""
+class RuleScoringOutput(BaseModel):
+    """单条规则打分输出（rule_scorer 节点用）。"""
 
     deductions: list[Deduction] = Field(default_factory=list)
     fatal_triggers: list[FatalTrigger] = Field(default_factory=list)
+
+
+class ExtractionOutput(BaseModel):
+    """提取节点输出：hot_words / business_words / should_say / should_not_say。"""
+
     hot_words: list[HotWord] = Field(default_factory=list)
     business_words: list[HotWord] = Field(default_factory=list)
     should_say: list[str] = Field(default_factory=list)

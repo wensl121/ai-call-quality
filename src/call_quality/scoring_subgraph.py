@@ -1,35 +1,49 @@
-"""打分-审核子图。
+"""打分-审核子图（带 Send 并行 fan-out）。
 
-把 scoring_loop ⇄ auditor 这一闭环抽成独立子图：
-- 主图只见到一个节点 `scoring_with_audit`
-- 子图自身负责"打分 → 审核 → 不通过则回打分"，并由 auditor 在达到上限时
-  强制 passed=True 并标记 requires_human_review
-
-子图复用同一个 GraphState（TypedDict 键自动对齐），父子状态透明合并。
+流程：
+    START → scoring_dispatcher  (清空上一轮 deductions / fatal_triggers)
+              ↓ Send 派发
+            ┌──────────────────────────┬──────────────────┐
+        rule_scorer × N (并行 per rule)   extraction_node (并行)
+            └──────────────┬───────────┴──────────────────┘
+                           ↓ 自动 fan-in
+                        auditor → END | back to scoring_dispatcher
 """
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
 from .nodes.auditor import auditor
-from .nodes.scoring_loop import scoring_loop
+from .nodes.extraction import extraction_node
+from .nodes.rule_scorer import rule_scorer
+from .nodes.scoring_dispatcher import fan_out, scoring_dispatcher
 from .state import GraphState
 
 
 def _route_after_audit(state: GraphState) -> str:
-    return END if state.get("audit_passed") else "scoring_loop"
+    return END if state.get("audit_passed") else "scoring_dispatcher"
 
 
 def build_scoring_subgraph():
     g = StateGraph(GraphState)
-    g.add_node("scoring_loop", scoring_loop)
+    g.add_node("scoring_dispatcher", scoring_dispatcher)
+    g.add_node("rule_scorer", rule_scorer)
+    g.add_node("extraction_node", extraction_node)
     g.add_node("auditor", auditor)
 
-    g.add_edge(START, "scoring_loop")
-    g.add_edge("scoring_loop", "auditor")
+    g.add_edge(START, "scoring_dispatcher")
+    g.add_conditional_edges(
+        "scoring_dispatcher",
+        fan_out,
+        ["rule_scorer", "extraction_node"],
+    )
+    # 所有并行 Send 完成后自动汇合到 auditor
+    g.add_edge("rule_scorer", "auditor")
+    g.add_edge("extraction_node", "auditor")
+
     g.add_conditional_edges(
         "auditor",
         _route_after_audit,
-        {"scoring_loop": "scoring_loop", END: END},
+        {"scoring_dispatcher": "scoring_dispatcher", END: END},
     )
     return g.compile()

@@ -16,6 +16,16 @@ def test_scoring_subgraph_compiles():
     assert sub is not None
 
 
+def test_list_add_or_reset_reducer():
+    from call_quality.state import RESET, list_add_or_reset
+
+    assert list_add_or_reset([], [1, 2]) == [1, 2]
+    assert list_add_or_reset([1, 2], [3]) == [1, 2, 3]
+    assert list_add_or_reset([1, 2, 3], RESET) == []
+    assert list_add_or_reset(None, [1]) == [1]
+    assert list_add_or_reset([1], "garbage") == [1]
+
+
 def test_aggregator_fatal_zeroes_score():
     import importlib
 

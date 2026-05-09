@@ -5,6 +5,30 @@
   "conversation": "00:00:00 角色1：8199号为您服务。\n00:00:05 角色2：你好，张姐姐，请问有什么可以这样子？\n00:00:10 角色1：我有一个基金，你们招商那个中的白酒我想赎回，但是我都不知道是在哪个渠道买的。\n00:00:36 角色2：好的，那就不打扰您了，祝您生活愉快，再见。",
   "rules_json": [
     {
+      "rule_id": 1,
+      "deduction_mode": {"description": "出现则本任务得分为0", "max_deduction": 1000, "deduct_points": 1000},
+      "scenarios": [
+        {
+          "check_scope": "客服说的话",
+          "type": "关键词检测",
+          "scenario_id": 1,
+          "required_checks": {"type": "不应该说", "content": "保证收益；保本；稳赚；包赚；肯定包赚；零风险高收益"}
+        }
+      ]
+    },
+    {
+      "rule_id": 4,
+      "deduction_mode": {"description": "出现则本任务得分为0", "max_deduction": 1000, "deduct_points": 1000},
+      "scenarios": [
+        {
+          "check_scope": "客服说的话",
+          "type": "语义匹配检测",
+          "scenario_id": 5,
+          "required_checks": {"type": "不应该说", "content": "发表个人对市场或行业未来走势的预测"}
+        }
+      ]
+    },
+    {
       "rule_id": 7,
       "deduction_mode": {"description": "每出现一处扣2分，最多10分", "max_deduction": 10, "deduct_points": 2},
       "scenarios": [
@@ -19,6 +43,30 @@
           "type": "语义匹配检测",
           "scenario_id": 12,
           "required_checks": {"type": "应该说", "content": "结束前应询问：请问还有什么可以帮到您？"}
+        }
+      ]
+    },
+    {
+      "rule_id": 8,
+      "deduction_mode": {"description": "每出现一处扣2分，最多10分", "max_deduction": 10, "deduct_points": 2},
+      "scenarios": [
+        {
+          "check_scope": "客服说的话",
+          "type": "关键词检测",
+          "scenario_id": 8,
+          "required_checks": {"type": "不应该说", "content": "不知道；没办法；与我无关；什么意思；你听不懂我说话吗"}
+        }
+      ]
+    },
+    {
+      "rule_id": 17,
+      "deduction_mode": {"description": "答非所问/与知识库不符", "max_deduction": 10, "deduct_points": 2},
+      "scenarios": [
+        {
+          "check_scope": "客服说的话",
+          "type": "语义匹配检测",
+          "scenario_id": 0,
+          "required_checks": {"type": "应该说", "content": "客服回答应与知识库 kb_answer 一致"}
         }
       ]
     }
