@@ -1,9 +1,4 @@
-"""审核节点：检查打分合理性。
-
-输出格式 {passed, reasons[], issues[]}：
-- passed=False → 回到 scoring_loop（issues 作为 previous_audit_issues 反馈）
-- 达到 MAX_SCORING_LOOPS 仍未通过 → 强制 passed=True 并标记 requires_human_review
-"""
+"""审核节点：检查打分合理性。"""
 from __future__ import annotations
 
 import json
@@ -12,7 +7,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from ..llm import chat_json
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from ..llm import get_chat_model
+from ..schemas import AuditOutput
 from ..state import GraphState
 
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "audit.txt").read_text(encoding="utf-8")
@@ -34,26 +32,20 @@ def _summarize_groups(deductions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     sums: Counter[str] = Counter()
     for d in deductions:
         gid = d.get("group_id")
-        if not gid:
-            continue
-        sums[gid] += int(d.get("subtotal", 0))
-    out = []
-    for g in _DEFAULT_GROUPS:
-        if g["type"] == "fatal":
-            continue
-        gid = g["group_id"]
-        out.append(
-            {
-                "group_id": gid,
-                "deducted": min(sums.get(gid, 0), g["cap"]),
-                "cap_applied": g["cap"],
-            }
-        )
-    return out
+        if gid:
+            sums[gid] += int(d.get("subtotal", 0))
+    return [
+        {
+            "group_id": g["group_id"],
+            "deducted": min(sums.get(g["group_id"], 0), g["cap"]),
+            "cap_applied": g["cap"],
+        }
+        for g in _DEFAULT_GROUPS
+        if g["type"] != "fatal"
+    ]
 
 
 def _build_main_result(state: GraphState) -> dict[str, Any]:
-    """根据 state 拼出审核员要看的 main_result（与最终 aggregator 输出结构一致）。"""
     deductions = state.get("deductions", [])
     fatal_triggers = state.get("fatal_triggers", [])
     fatal_applied = bool(fatal_triggers)
@@ -79,29 +71,28 @@ def auditor(state: GraphState) -> GraphState:
         "rules_json": state["rules_json"],
         "main_result": _build_main_result(state),
     }
-    verdict = chat_json(
-        [
-            {"role": "system", "content": _PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ]
+    llm = get_chat_model().with_structured_output(AuditOutput, method="function_calling")
+    verdict: AuditOutput = llm.invoke(
+        [SystemMessage(_PROMPT), HumanMessage(json.dumps(payload, ensure_ascii=False))]
     )
-    passed = bool(verdict.get("passed", False))
-    reasons = verdict.get("reasons", []) or []
-    issues = verdict.get("issues", []) or []
 
-    if not passed and attempts >= _max_loops():
+    issues = [i.model_dump() for i in verdict.issues]
+
+    if not verdict.passed and attempts >= _max_loops():
         return {
             "audit_passed": True,
             "audit_attempts": attempts,
-            "audit_reasons": reasons,
+            "audit_reasons": verdict.reasons,
             "audit_issues": issues,
             "requires_human_review": True,
-            "review_reason": f"审核连续 {attempts} 次未通过：{'; '.join(reasons) or '存在 issues'}",
+            "review_reason": (
+                f"审核连续 {attempts} 次未通过：{'; '.join(verdict.reasons) or '存在 issues'}"
+            ),
         }
 
     return {
-        "audit_passed": passed,
+        "audit_passed": verdict.passed,
         "audit_attempts": attempts,
-        "audit_reasons": reasons,
+        "audit_reasons": verdict.reasons,
         "audit_issues": issues,
     }

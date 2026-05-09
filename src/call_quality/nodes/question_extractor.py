@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..llm import chat_json
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from ..llm import get_chat_model
+from ..schemas import ExtractedQuestions
 from ..state import GraphState
 
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "extract_questions.txt").read_text(
@@ -12,13 +15,8 @@ _PROMPT = (Path(__file__).parent.parent / "prompts" / "extract_questions.txt").r
 
 
 def question_extractor(state: GraphState) -> GraphState:
-    conversation = state["conversation"]
-    questions = chat_json(
-        [
-            {"role": "system", "content": _PROMPT},
-            {"role": "user", "content": conversation},
-        ]
+    llm = get_chat_model().with_structured_output(ExtractedQuestions, method="function_calling")
+    result: ExtractedQuestions = llm.invoke(
+        [SystemMessage(_PROMPT), HumanMessage(state["conversation"])]
     )
-    if isinstance(questions, dict):
-        questions = questions.get("questions", [])
-    return {"questions": questions or []}
+    return {"questions": [q.model_dump() for q in result.questions]}

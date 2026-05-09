@@ -101,3 +101,48 @@ class QualityInput(BaseModel):
     conversation: str
     rules_json: list[dict[str, Any]]
     template_used: str = "voice_template"
+
+
+# === LLM 调用的结构化输出契约 ===
+# 每个节点的 LLM 调用通过 with_structured_output(Schema) 强制返回这些类型，
+# 跳过手写 json.loads 与 schema 校验。
+
+
+class ExtractedQuestion(BaseModel):
+    timestamp: str = Field(description="客户提问的时间戳，从对话原文取，没有可留空字符串")
+    question_text: str = Field(description="客户提的问题原文或简化")
+    agent_answer: str | None = Field(
+        default=None,
+        description="客服紧接给出的回答原文，用于和知识库比对；没有则为空字符串",
+    )
+
+
+class ExtractedQuestions(BaseModel):
+    """问题提取节点的输出。"""
+
+    questions: list[ExtractedQuestion] = Field(default_factory=list)
+
+
+class ScoringOutput(BaseModel):
+    """规则打分节点的输出（同时产 hot_words / business_words / should_say / should_not_say）。"""
+
+    deductions: list[Deduction] = Field(default_factory=list)
+    fatal_triggers: list[FatalTrigger] = Field(default_factory=list)
+    hot_words: list[HotWord] = Field(default_factory=list)
+    business_words: list[HotWord] = Field(default_factory=list)
+    should_say: list[str] = Field(default_factory=list)
+    should_not_say: list[str] = Field(default_factory=list)
+
+
+class AuditIssue(BaseModel):
+    type: Literal["规则映射错误", "证据真实性错误", "计算矛盾"]
+    location: str = Field(description="如 fatal_triggers[0] / deductions[1].evidence[0] / totals.final_score")
+    detail: str
+
+
+class AuditOutput(BaseModel):
+    """审核节点的输出。"""
+
+    passed: bool
+    reasons: list[str] = Field(default_factory=list)
+    issues: list[AuditIssue] = Field(default_factory=list)
