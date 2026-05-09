@@ -14,6 +14,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+try:
+    from langsmith import traceable
+except ImportError:  # langsmith optional
+    def traceable(*_args, **_kwargs):  # type: ignore[no-redef]
+        def deco(f):
+            return f
+        return deco if not _args or not callable(_args[0]) else _args[0]
+
 
 class LLMError(RuntimeError):
     pass
@@ -23,6 +31,7 @@ def _provider() -> str:
     return os.getenv("LLM_PROVIDER", "deepseek").lower()
 
 
+@traceable(name="llm.chat", run_type="llm")
 def chat(
     messages: list[dict[str, str]],
     *,
@@ -123,6 +132,7 @@ def _call_anthropic(
     return resp.json()["content"][0]["text"]
 
 
+@traceable(name="llm.chat_json", run_type="llm")
 def chat_json(messages: list[dict[str, str]], *, temperature: float = 0.0) -> Any:
     """调用 LLM 并解析 JSON 输出。"""
     raw = chat(messages, temperature=temperature, response_format="json")
