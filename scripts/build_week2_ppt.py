@@ -1,37 +1,50 @@
-"""生成周分享 2 PPT（基于周分享 1 模板）。
+"""生成周分享 2 PPT。
 
-用法：python scripts/build_week2_ppt.py
-输出：C:\\Users\\Z\\Desktop\\周分享\\周分享2.pptx
+策略：基于周分享1.pptx，用其中带 bg 装饰的 layouts（Title Slide / Title Only），
+保留所有视觉素材（红色装饰、MORE VALUE 角标、freeform 几何元素），仅在干净画布上添加内容。
+
+主线：第二周预研内容（LangChain Agent / LangGraph / Context Engineering 三大模块），
+项目作每个模块的最后一页案例。
 """
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Cm, Emu, Pt
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.util import Cm, Pt
 
 WEEK1 = Path(r"C:\Users\Z\Desktop\周分享\周分享1.pptx")
-OUT = Path(r"C:\Users\Z\Desktop\周分享\周分享2.pptx")
+import os as _os
+
+_DEFAULT_OUT = Path(r"C:\Users\Z\Desktop\周分享\周分享2.pptx")
+OUT = Path(_os.environ.get("PPT_OUT", str(_DEFAULT_OUT)))
 SHOTS = Path(r"C:\Users\Z\Desktop\周分享\周分享2")
 
-PRIMARY = RGBColor(0xC0, 0x39, 0x2B)        # 招商红
+# 配色（招商基金风格）
+PRIMARY = RGBColor(0xC0, 0x39, 0x2B)
 ACCENT = RGBColor(0x1F, 0x49, 0x7D)
 DARK = RGBColor(0x33, 0x33, 0x33)
 GREY = RGBColor(0x66, 0x66, 0x66)
 LIGHT_GREY = RGBColor(0xEE, 0xEE, 0xEE)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 
+# 内容区参考边界（cm，16:9 = 33.87 x 19.05）
+SLIDE_W = 33.87
+SLIDE_H = 19.05
+
+
+# ============================================================
+# Helpers
+# ============================================================
 
 def _delete_all_slides(prs: Presentation) -> None:
-    """保留 master / layouts，把 slides 全部清空。"""
     sldIdLst = prs.slides._sldIdLst
+    rid_attr = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
     for sldId in list(sldIdLst):
-        rId = sldId.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
-        prs.part.drop_rel(rId)
+        prs.part.drop_rel(sldId.attrib[rid_attr])
         sldIdLst.remove(sldId)
 
 
@@ -39,357 +52,483 @@ def _layout(prs: Presentation, name: str):
     for lo in prs.slide_layouts:
         if lo.name == name:
             return lo
-    return prs.slide_layouts[1]  # fallback "Title and Content"
+    return prs.slide_layouts[1]
 
 
-def _add_text_box(
-    slide,
-    left_cm: float,
-    top_cm: float,
-    width_cm: float,
-    height_cm: float,
-    text: str,
-    *,
-    font_size: int = 14,
-    bold: bool = False,
-    color: RGBColor = DARK,
-    align=PP_ALIGN.LEFT,
-):
-    tb = slide.shapes.add_textbox(Cm(left_cm), Cm(top_cm), Cm(width_cm), Cm(height_cm))
+def _new_slide(prs: Presentation, layout_name: str, *, drop_placeholders: bool = True):
+    """新建 slide，layout 自带的装饰 shapes 保留，placeholders 全部删掉留干净画布。"""
+    s = prs.slides.add_slide(_layout(prs, layout_name))
+    if drop_placeholders:
+        for ph in list(s.placeholders):
+            ph._element.getparent().remove(ph._element)
+    return s
+
+
+def _txt(slide, x_cm, y_cm, w_cm, h_cm, text, *,
+         size=14, bold=False, color=DARK, align=PP_ALIGN.LEFT,
+         vert=MSO_ANCHOR.TOP, font_name="微软雅黑"):
+    tb = slide.shapes.add_textbox(Cm(x_cm), Cm(y_cm), Cm(w_cm), Cm(h_cm))
     tf = tb.text_frame
     tf.word_wrap = True
-    tf.margin_left = Cm(0.1)
-    tf.margin_right = Cm(0.1)
-    tf.margin_top = Cm(0.05)
-    tf.margin_bottom = Cm(0.05)
-
+    tf.vertical_anchor = vert
+    tf.margin_left = Cm(0.05); tf.margin_right = Cm(0.05)
+    tf.margin_top = Cm(0.05); tf.margin_bottom = Cm(0.05)
     lines = text.split("\n")
     for i, line in enumerate(lines):
         para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         para.alignment = align
-        run = para.add_run()
-        run.text = line
-        run.font.name = "微软雅黑"
-        run.font.size = Pt(font_size)
-        run.font.bold = bold
-        run.font.color.rgb = color
+        r = para.add_run()
+        r.text = line
+        r.font.name = font_name
+        r.font.size = Pt(size)
+        r.font.bold = bold
+        r.font.color.rgb = color
     return tb
 
 
-def _add_bullets(
-    slide,
-    left_cm: float,
-    top_cm: float,
-    width_cm: float,
-    height_cm: float,
-    items: list[str],
-    *,
-    font_size: int = 13,
-    color: RGBColor = DARK,
-    bullet_color: RGBColor = PRIMARY,
-):
-    tb = slide.shapes.add_textbox(Cm(left_cm), Cm(top_cm), Cm(width_cm), Cm(height_cm))
+def _bullets(slide, x, y, w, h, items, *, size=12, color=DARK, bullet=PRIMARY,
+             space_after=4):
+    tb = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
     tf = tb.text_frame
     tf.word_wrap = True
-
     for i, item in enumerate(items):
-        para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        para.alignment = PP_ALIGN.LEFT
-        para.space_after = Pt(4)
-
-        bul = para.add_run()
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.LEFT
+        p.space_after = Pt(space_after)
+        bul = p.add_run()
         bul.text = "• "
-        bul.font.name = "微软雅黑"
-        bul.font.size = Pt(font_size)
-        bul.font.bold = True
-        bul.font.color.rgb = bullet_color
-
-        run = para.add_run()
+        bul.font.name = "微软雅黑"; bul.font.size = Pt(size)
+        bul.font.bold = True; bul.font.color.rgb = bullet
+        run = p.add_run()
         run.text = item
-        run.font.name = "微软雅黑"
-        run.font.size = Pt(font_size)
+        run.font.name = "微软雅黑"; run.font.size = Pt(size)
         run.font.color.rgb = color
     return tb
 
 
-def _add_section_header(slide, number: str, title: str):
-    """页面左上角的 "01 标题" 风格 header。"""
-    # 数字
-    num = slide.shapes.add_textbox(Cm(0.8), Cm(0.4), Cm(2), Cm(1.5))
-    tf = num.text_frame
+def _section_header(slide, num, title):
+    """页面左上角大号 '01 标题' header。"""
+    n = slide.shapes.add_textbox(Cm(0.8), Cm(0.5), Cm(2.5), Cm(1.6))
+    tf = n.text_frame
     p = tf.paragraphs[0]
-    r = p.add_run()
-    r.text = number
-    r.font.name = "Arial"
-    r.font.size = Pt(28)
-    r.font.bold = True
+    r = p.add_run(); r.text = num
+    r.font.name = "Arial"; r.font.size = Pt(32); r.font.bold = True
     r.font.color.rgb = PRIMARY
-    # 标题
-    tit = slide.shapes.add_textbox(Cm(2.6), Cm(0.7), Cm(28), Cm(1.2))
-    tf = tit.text_frame
+
+    t = slide.shapes.add_textbox(Cm(3.2), Cm(0.85), Cm(28), Cm(1.2))
+    tf = t.text_frame
     p = tf.paragraphs[0]
-    r = p.add_run()
-    r.text = title
-    r.font.name = "微软雅黑"
-    r.font.size = Pt(22)
-    r.font.bold = True
+    r = p.add_run(); r.text = title
+    r.font.name = "微软雅黑"; r.font.size = Pt(22); r.font.bold = True
     r.font.color.rgb = DARK
-    # 红色下划线
-    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(0.8), Cm(2.0), Cm(1.5), Cm(0.08))
-    line.fill.solid()
-    line.fill.fore_color.rgb = PRIMARY
-    line.line.fill.background()
+
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(0.8), Cm(2.3), Cm(2), Cm(0.08))
+    bar.fill.solid(); bar.fill.fore_color.rgb = PRIMARY
+    bar.line.fill.background()
 
 
-def _add_code_block(slide, left_cm, top_cm, width_cm, height_cm, code: str, font_size: int = 10):
-    box = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, Cm(left_cm), Cm(top_cm), Cm(width_cm), Cm(height_cm)
-    )
-    box.fill.solid()
-    box.fill.fore_color.rgb = RGBColor(0x2D, 0x2D, 0x2D)
+def _code_block(slide, x, y, w, h, code, *, size=10):
+    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y), Cm(w), Cm(h))
+    box.fill.solid(); box.fill.fore_color.rgb = RGBColor(0x2B, 0x2B, 0x2B)
     box.line.fill.background()
     tf = box.text_frame
-    tf.margin_left = Cm(0.3)
-    tf.margin_right = Cm(0.3)
-    tf.margin_top = Cm(0.2)
-    tf.margin_bottom = Cm(0.2)
+    tf.margin_left = Cm(0.3); tf.margin_right = Cm(0.3)
+    tf.margin_top = Cm(0.2); tf.margin_bottom = Cm(0.2)
     tf.word_wrap = True
-
     for i, line in enumerate(code.split("\n")):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.alignment = PP_ALIGN.LEFT
         r = p.add_run()
         r.text = line if line else " "
-        r.font.name = "Consolas"
-        r.font.size = Pt(font_size)
-        r.font.color.rgb = RGBColor(0xE0, 0xE0, 0xE0)
+        r.font.name = "Consolas"; r.font.size = Pt(size)
+        r.font.color.rgb = RGBColor(0xE6, 0xE6, 0xE6)
 
 
-def _add_picture_safe(slide, path: Path, left_cm, top_cm, width_cm=None, height_cm=None):
+def _pic(slide, path, x, y, w=None, h=None):
     if not path.exists():
         return None
-    kwargs = {"left": Cm(left_cm), "top": Cm(top_cm)}
-    if width_cm:
-        kwargs["width"] = Cm(width_cm)
-    if height_cm:
-        kwargs["height"] = Cm(height_cm)
-    return slide.shapes.add_picture(str(path), **kwargs)
+    kw = {"left": Cm(x), "top": Cm(y)}
+    if w: kw["width"] = Cm(w)
+    if h: kw["height"] = Cm(h)
+    return slide.shapes.add_picture(str(path), **kw)
 
 
-def _add_footer(slide, page_no: int, total: int):
-    """右下角页码。"""
-    tb = slide.shapes.add_textbox(Cm(30), Cm(18.7), Cm(3), Cm(0.6))
+def _table(slide, x, y, col_widths_cm, rows,
+           header_fill=PRIMARY, alt_fill=LIGHT_GREY, base_fill=WHITE,
+           header_color=WHITE, body_color=DARK, font_size=11, row_h=1.0):
+    """简单表格：第一行表头。rows[i][j] 为单元格文本。"""
+    cur_y = y
+    for ri, row in enumerate(rows):
+        cur_x = x
+        for ci, cell in enumerate(row):
+            cw = col_widths_cm[ci]
+            rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(cur_x), Cm(cur_y),
+                                          Cm(cw), Cm(row_h))
+            if ri == 0:
+                rect.fill.solid(); rect.fill.fore_color.rgb = header_fill
+                rect.line.fill.background()
+                tcolor = header_color; bold = True
+            else:
+                rect.fill.solid()
+                rect.fill.fore_color.rgb = base_fill if ri % 2 else alt_fill
+                rect.line.color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
+                tcolor = body_color
+                bold = (ci == 0)
+            tf = rect.text_frame
+            tf.margin_left = Cm(0.2); tf.margin_right = Cm(0.2)
+            tf.margin_top = Cm(0.15); tf.margin_bottom = Cm(0.15)
+            tf.word_wrap = True
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            p = tf.paragraphs[0]
+            p.alignment = PP_ALIGN.LEFT
+            r = p.add_run(); r.text = cell
+            r.font.name = "微软雅黑"; r.font.size = Pt(font_size)
+            r.font.bold = bold; r.font.color.rgb = tcolor
+            cur_x += cw
+        cur_y += row_h
+
+
+def _footer_pageno(slide, num, total):
+    tb = slide.shapes.add_textbox(Cm(SLIDE_W - 3), Cm(SLIDE_H - 1.0), Cm(2.5), Cm(0.5))
     tf = tb.text_frame
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.RIGHT
-    r = p.add_run()
-    r.text = f"{page_no} / {total}"
-    r.font.name = "Arial"
-    r.font.size = Pt(9)
-    r.font.color.rgb = GREY
+    p = tf.paragraphs[0]; p.alignment = PP_ALIGN.RIGHT
+    r = p.add_run(); r.text = f"{num} / {total}"
+    r.font.name = "Arial"; r.font.size = Pt(9); r.font.color.rgb = GREY
 
 
 # ============================================================
-# Main builder
+# Build
 # ============================================================
 
 def build():
     prs = Presentation(str(WEEK1))
     _delete_all_slides(prs)
 
-    title_layout = _layout(prs, "Title and Content")
-    blank_layout = _layout(prs, "仅标题") if any(l.name == "仅标题" for l in prs.slide_layouts) else title_layout
+    # 检测可用 layout 名（可能是中文或英文）
+    layout_names = [lo.name for lo in prs.slide_layouts]
+    print("available layouts:", layout_names)
 
-    # Slide width/height in cm (16:9)
-    sw = prs.slide_width / 360000  # EMU → cm
-    sh = prs.slide_height / 360000
+    # 优先使用带 bg 装饰的 layouts
+    cover_layout = "Title Slide" if "Title Slide" in layout_names else layout_names[0]
+    content_layout = "Title Only" if "Title Only" in layout_names else "Title and Content"
+    two_layout = "Two Content" if "Two Content" in layout_names else content_layout
 
-    pages = []  # (build_func, ...)
+    builders = []
 
-    # ===== 1. 封面 =====
+    # ========== 1. 封面 ==========
     def slide_1():
-        s = prs.slides.add_slide(title_layout)
-        _add_text_box(s, 1.5, 5.5, 30, 2,
-                      "Agent 技术框架与产品实践分享 02",
-                      font_size=32, bold=True, color=DARK)
-        _add_text_box(s, 1.5, 8.5, 30, 1.5,
-                      "—— LangChain & LangGraph + AI 通话质检系统实战",
-                      font_size=18, color=GREY)
-        # 红色装饰条
-        bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(1.5), Cm(11), Cm(2.5), Cm(0.15))
-        bar.fill.solid(); bar.fill.fore_color.rgb = PRIMARY; bar.line.fill.background()
-        _add_text_box(s, 1.5, 16.5, 15, 0.8,
-                      "MORE  VALUE", font_size=13, bold=True, color=PRIMARY)
-        _add_text_box(s, 1.5, 17.3, 15, 0.8,
-                      "FOR INVESTORS", font_size=13, bold=True, color=PRIMARY)
-        _add_text_box(s, 23, 16.8, 10, 0.7, "分享人：温舒麟", font_size=12, color=GREY, align=PP_ALIGN.RIGHT)
-        _add_text_box(s, 23, 17.7, 10, 0.7, "部门：信息技术部 - 开发三组", font_size=12, color=GREY, align=PP_ALIGN.RIGHT)
+        s = _new_slide(prs, cover_layout)
+        _txt(s, 1.5, 6.5, 30, 2.2, "Agent 技术框架与产品实践分享 02",
+             size=34, bold=True, color=DARK)
+        _txt(s, 1.5, 9.2, 30, 1.5,
+             "—— LangChain · LangGraph · Context Engineering",
+             size=20, color=PRIMARY)
+        _txt(s, 1.5, 11, 30, 1, "第二周预研分享", size=14, color=GREY)
+        # 信息行
+        _txt(s, 1.5, 16.5, 20, 0.8, "分享人：温舒麟", size=12, color=DARK)
+        _txt(s, 1.5, 17.4, 20, 0.8, "部门：信息技术部 - 开发三组", size=12, color=DARK)
         return s
+    builders.append(slide_1)
 
-    # ===== 2. 目录 =====
+    # ========== 2. 目录（三大模块）==========
     def slide_2():
-        s = prs.slides.add_slide(blank_layout)
-        _add_text_box(s, 1.5, 1.0, 25, 1.5, "本周分享 · 三大模块",
-                      font_size=24, bold=True, color=DARK)
-        bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(1.5), Cm(2.6), Cm(2.5), Cm(0.12))
-        bar.fill.solid(); bar.fill.fore_color.rgb = PRIMARY; bar.line.fill.background()
-
-        # 三大模块卡片
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "", "本周分享 · 三大模块")
         items = [
-            ("01", "LangChain & LangGraph 概念", "为什么需要图编排 / 核心组件 / Middleware"),
-            ("02", "项目实战：AI 通话质检", "从 Dify 迁移到 LangGraph 的全过程，5 项核心能力"),
-            ("03", "LangSmith 工程化", "Tracing · Evals · Studio · Platform 部署"),
+            ("01", "LangChain Agent 架构",
+             "Agent 编排演进 · create_agent · Middleware 横切机制"),
+            ("02", "LangGraph 图编排",
+             "Graph Runtime · State / Reducer · Send 并行 · Subgraph"),
+            ("03", "Context Engineering & LangSmith",
+             "上下文工程 · Tracing · Evals · Studio · Platform"),
         ]
         top = 4.5
         for num, title, sub in items:
-            _add_text_box(s, 1.5, top, 2, 1.5, num, font_size=36, bold=True, color=PRIMARY)
-            _add_text_box(s, 4.5, top + 0.2, 25, 1, title, font_size=18, bold=True, color=DARK)
-            _add_text_box(s, 4.5, top + 1.2, 25, 0.8, sub, font_size=12, color=GREY)
-            top += 3.5
+            _txt(s, 1.5, top, 2.5, 1.8, num, size=44, bold=True, color=PRIMARY)
+            _txt(s, 5, top + 0.4, 27, 1.2, title, size=20, bold=True, color=DARK)
+            _txt(s, 5, top + 1.6, 27, 1, sub, size=13, color=GREY)
+            top += 4.0
         return s
+    builders.append(slide_2)
 
-    # ===== 3. 01-1 LangChain vs LangGraph (上) =====
+    # ============================================================
+    # 模块 01：LangChain Agent 架构（4 页）
+    # ============================================================
+
+    # 3. 01-1 Agent 编排概览
     def slide_3():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "01", "LangChain Agent vs LangGraph：何时用哪个？")
-        _add_text_box(s, 1, 3, 30, 0.8,
-                      "LangChain 1.0 把这两条路线明确分开",
-                      font_size=14, color=GREY)
-        # 对比表
-        rows = [
-            ("",                   "LangChain Agent（create_agent）",      "LangGraph"),
-            ("适用",               "单一 Agent（一个模型 + 工具循环）",     "多步骤工作流 / 复杂分支与循环"),
-            ("控制粒度",           "中等（middleware 钩子）",                "高（每条边、每个节点都能定制）"),
-            ("典型场景",           "ReAct、客服 chatbot、tool-using agent",  "审批流、质检、研究流水线、HITL"),
-            ("状态",               "消息历史为主",                           "TypedDict + 自定义 reducer"),
-            ("可观测",             "LangSmith 自动",                         "LangSmith 自动 + Studio 可视化调试"),
-        ]
-        from pptx.util import Cm as C
-        n_cols = 3
-        col_widths = [4.5, 12, 12.5]
-        left = 1.5
-        top = 4.4
-        row_h = 1.4
-        for r_idx, row in enumerate(rows):
-            x = left
-            for c_idx, cell in enumerate(row):
-                rect = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, C(x), C(top + r_idx * row_h),
-                                          C(col_widths[c_idx]), C(row_h))
-                if r_idx == 0:
-                    rect.fill.solid(); rect.fill.fore_color.rgb = PRIMARY
-                    rect.line.fill.background()
-                    text_color = WHITE; bold = True
-                else:
-                    rect.fill.solid()
-                    rect.fill.fore_color.rgb = WHITE if r_idx % 2 else LIGHT_GREY
-                    rect.line.color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
-                    text_color = DARK; bold = (c_idx == 0)
-                tf = rect.text_frame
-                tf.margin_left = C(0.2); tf.margin_right = C(0.2)
-                tf.margin_top = C(0.15); tf.margin_bottom = C(0.15)
-                tf.word_wrap = True
-                p = tf.paragraphs[0]
-                p.alignment = PP_ALIGN.LEFT
-                run = p.add_run()
-                run.text = cell
-                run.font.name = "微软雅黑"
-                run.font.size = Pt(11)
-                run.font.bold = bold
-                run.font.color.rgb = text_color
-                x += col_widths[c_idx]
-
-        _add_text_box(s, 1.5, 14.2, 30, 0.8,
-                      "👉 我们的质检系统：5 节点 + 子图循环 + 并行打分 → 选 LangGraph",
-                      font_size=13, bold=True, color=ACCENT)
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "01", "Agent 编排概览：从 Chain 到 Graph")
+        _txt(s, 1.5, 3, 31, 0.8, "LangChain 1.0 把单 Agent 与多步流程明确分到两个产品",
+             size=14, color=GREY)
+        _table(s, 1.5, 4.2, [4.5, 12.5, 12.5], [
+            ["",            "LangChain Agent（create_agent）", "LangGraph"],
+            ["定位",         "单 Agent 标准模式：模型 + 工具循环", "复杂工作流：多节点、分支、循环、并行"],
+            ["典型场景",     "ReAct、客服 chatbot、tool-using agent", "审批流、质检、研究流水线、人机协同"],
+            ["控制粒度",     "中等：middleware 钩子",                "高：每条边 / 每个节点都能定制"],
+            ["状态",         "消息历史为主",                          "TypedDict + 自定义 reducer"],
+            ["可观测",       "LangSmith 自动追踪",                    "LangSmith + Studio 可视化调试"],
+        ], row_h=1.3)
+        _txt(s, 1.5, 14, 31, 1,
+             "👉 单 Agent 解决一类任务，多步流程要靠 Graph 编排；中间用 Middleware 拼接共性能力",
+             size=13, bold=True, color=ACCENT)
         return s
+    builders.append(slide_3)
 
-    # ===== 4. 01-1 (下) Dify 流程图说明 =====
+    # 4. 01-2 create_agent
     def slide_4():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "01", "为什么从 Dify 迁到 LangGraph？")
-        _add_picture_safe(s, SHOTS / "dify流程图.jpg", 1.5, 3.0, width_cm=22)
-        _add_text_box(s, 24.5, 3.3, 9, 0.8, "原 Dify 流程", font_size=14, bold=True, color=DARK)
-        _add_bullets(s, 24.5, 4.2, 9, 6, [
-            "可视化拼装 ✓",
-            "节点逻辑黑盒",
-            "状态难管理",
-            "调试只能看节点输出",
-            "测试无回归保障",
-            "成本不可见",
-        ], font_size=11)
-        _add_text_box(s, 24.5, 11.5, 9, 0.8, "迁到 LangGraph 后", font_size=14, bold=True, color=PRIMARY)
-        _add_bullets(s, 24.5, 12.4, 9, 5, [
-            "代码化 / 可 Code Review",
-            "TypedDict 强类型 state",
-            "trace 全链路可视化",
-            "Pytest + Evals 双层回归",
-            "每次调用 token 成本可统计",
-        ], font_size=11)
-        return s
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "01", "create_agent：标准 ReAct 模式")
+        _txt(s, 1.5, 3, 31, 0.7,
+             "LangChain 1.0 内置的单 Agent 工厂，一行代码起一个会用工具的 Agent",
+             size=13, color=GREY)
+        _code_block(s, 1.5, 4.2, 18, 9, """from langchain.agents import create_agent
+from langchain.tools import tool
 
-    # ===== 5. 01-2 Graph Runtime 概念 =====
+@tool
+def get_weather(city: str) -> str:
+    \"\"\"查询城市天气\"\"\"
+    return f"{city}: 23°C"
+
+agent = create_agent(
+    model="anthropic:claude-sonnet-4-6",
+    tools=[get_weather],
+    system_prompt="你是天气助手",
+)
+
+response = agent.invoke({"messages": "今天上海天气？"})""", size=11)
+
+        _txt(s, 20.5, 4.2, 12, 0.6, "运行机制（ReAct Loop）",
+             size=13, bold=True, color=PRIMARY)
+        _bullets(s, 20.5, 5.1, 12, 7, [
+            "用户输入 → 模型判断要不要调工具",
+            "要 → 生成 tool call → 执行 → 结果回填",
+            "不要 → 直接回答",
+            "循环直到模型说\"完成\"",
+        ], size=12)
+
+        _txt(s, 20.5, 9.8, 12, 0.6, "局限",
+             size=13, bold=True, color=PRIMARY)
+        _bullets(s, 20.5, 10.6, 12, 5, [
+            "只有一个 Agent + 一个工具循环",
+            "想加分支 / 循环 / 并行 → 力不从心",
+            "复杂业务流程要拆出多 Agent",
+            "→ 用 LangGraph 显式编排",
+        ], size=12)
+        return s
+    builders.append(slide_4)
+
+    # 5. 01-3 Middleware
     def slide_5():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "01", "Graph Runtime 核心概念")
-        _add_text_box(s, 1.5, 3, 30, 0.8, "把 Agent 流程画成有向图，框架管 state、调度、并发、循环",
-                      font_size=14, color=GREY)
-        # 4 个概念卡片
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "01", "Middleware：横切关注点的标准机制")
+        _txt(s, 1.5, 3, 31, 0.8,
+             "在 LLM 调用前后插入逻辑，业务节点零侵入",
+             size=14, color=GREY)
+        # 三个 hook 卡片
         cards = [
-            ("Node 节点",     "一个函数：state → state 增量\n可纯计算，也可调 LLM/工具", PRIMARY),
-            ("Edge 边",       "节点间的连接\n固定边 / 条件边 / Send 动态边",          ACCENT),
-            ("State 状态",    "TypedDict + Reducer\n跨节点共享，自动合并",            RGBColor(0x2E, 0x7D, 0x32)),
-            ("Subgraph 子图", "把一组节点封成单元\n父子图自动共享 state 键",          RGBColor(0xEF, 0x6C, 0x00)),
+            ("before_model", "调模型前", PRIMARY,
+             "注入上下文\nPII 脱敏\n权限检查\n动态 system prompt"),
+            ("after_model", "调模型后", ACCENT,
+             "日志 / 审计\n成本统计\n输出审查\n格式校验"),
+            ("wrap_model_call", "完全包装", RGBColor(0x2E, 0x7D, 0x32),
+             "重试 / 降级\n响应缓存\n模型故障切换\n限流"),
         ]
-        x0 = 1.5
-        y0 = 4.5
-        cw = 7.5
-        ch = 5.5
-        gap = 0.5
-        for i, (title, desc, color) in enumerate(cards):
+        x0 = 1.5; y0 = 4.3; cw = 10.2; ch = 8; gap = 0.5
+        for i, (name, when, color, content) in enumerate(cards):
             x = x0 + i * (cw + gap)
-            top_bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0), Cm(cw), Cm(0.5))
-            top_bar.fill.solid(); top_bar.fill.fore_color.rgb = color; top_bar.line.fill.background()
-            body = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0 + 0.5), Cm(cw), Cm(ch - 0.5))
+            top = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0), Cm(cw), Cm(0.7))
+            top.fill.solid(); top.fill.fore_color.rgb = color; top.line.fill.background()
+            body = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0 + 0.7), Cm(cw), Cm(ch - 0.7))
             body.fill.solid(); body.fill.fore_color.rgb = WHITE
             body.line.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
-            _add_text_box(s, x + 0.4, y0 + 0.8, cw - 0.8, 1, title, font_size=15, bold=True, color=color)
-            _add_text_box(s, x + 0.4, y0 + 2.2, cw - 0.8, 3, desc, font_size=12, color=DARK)
+            _txt(s, x + 0.3, y0 + 0.05, cw - 0.6, 0.7, name,
+                 size=13, bold=True, color=WHITE, font_name="Consolas")
+            _txt(s, x + 0.4, y0 + 1, cw - 0.8, 0.8, when,
+                 size=12, bold=True, color=DARK)
+            _txt(s, x + 0.4, y0 + 2.1, cw - 0.8, 5, content,
+                 size=12, color=DARK)
 
-        _add_text_box(s, 1.5, 11, 30, 0.6, "执行模型", font_size=14, bold=True, color=DARK)
-        _add_bullets(s, 1.5, 11.8, 30, 4, [
-            "运行时按 BFS 推进：当前层所有节点完成 → 触发下一层",
-            "状态更新通过 reducer 合并，支持并行写入同一字段",
-            "条件边返回 Send(node, payload) → 动态 fan-out 多个并行实例",
-            "compile() 后是不可变对象，多次 invoke 共享同一 graph",
-        ], font_size=12)
+        _txt(s, 1.5, 13.2, 31, 0.7, "为什么把这些抽出来？",
+             size=14, bold=True, color=DARK)
+        _bullets(s, 1.5, 14, 31, 4, [
+            "PII 脱敏 / 成本统计 / 审计这些功能跟具体业务无关，每个节点都需要 → 中间件",
+            "改实现不动业务代码：换脱敏算法、加新模型，只改 middleware",
+            "可叠加：多个 middleware 像洋葱一样层层包装",
+        ], size=12)
         return s
+    builders.append(slide_5)
 
-    # ===== 6. 01-3 State / Reducer / Send / Subgraph =====
+    # 6. 01-4 项目案例：Middleware
     def slide_6():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "01", "State + Reducer + Send：并行编排的三件套")
-        _add_text_box(s, 1.5, 3, 16, 0.6, "1. TypedDict + Annotated reducer", font_size=13, bold=True, color=PRIMARY)
-        _add_code_block(s, 1.5, 3.7, 16, 4, """class GraphState(TypedDict, total=False):
-    conversation: str
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "01", "项目案例：PII 脱敏 + 成本追踪")
+        _txt(s, 1.5, 3, 31, 0.7,
+             "用一个金融通话质检系统印证 Middleware 的价值",
+             size=13, color=GREY)
+        _code_block(s, 1.5, 4, 17, 4.5, """# middleware/pii.py — 一次性脱敏
+def redact_pii(text):
+    for pattern, replacement in _PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+# input_node.py 唯一调用点
+def input_node(state):
+    return {"conversation": redact_pii(state["conversation"])}""", size=10)
+        _code_block(s, 1.5, 9, 17, 4, """# llm.py — 包装 LLM 调用，捕获 token 用量
+def invoke_structured(schema, messages, *, node_name):
+    model = get_chat_model()
+    bound = model.with_structured_output(schema, include_raw=True)
+    result = bound.invoke(messages)
+    usage = result["raw"].usage_metadata
+    return result["parsed"], _record(node_name, usage)""", size=10)
+
+        _pic(s, SHOTS / "成本计算.png", 19.5, 4, w=13)
+        _txt(s, 19.5, 13.5, 13, 0.7, "实测",
+             size=13, bold=True, color=PRIMARY)
+        _bullets(s, 19.5, 14.3, 13, 3, [
+            "一通 12s 通话 = $0.0024",
+            "rule_scorer 占 67% 成本",
+            "question_extractor 隐藏调用 2 次（结构化输出 retry）",
+        ], size=11)
+        return s
+    builders.append(slide_6)
+
+    # ============================================================
+    # 模块 02：LangGraph Graph Runtime（6 页）
+    # ============================================================
+
+    # 7. 02-1 为什么需要图编排
+    def slide_7():
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "02", "为什么需要图编排？")
+        _txt(s, 1.5, 3, 31, 0.8,
+             "线性 Chain 与单 Agent 都解决不了的三类问题",
+             size=14, color=GREY)
+        cases = [
+            ("分支", "根据中间结果选择不同后续路径",
+             "命中合规风险 → 直接判 0\n非致命 → 继续累加扣分"),
+            ("循环", "重复执行直到满足条件",
+             "打分 → 审核\n审核不通过 → 回去重打分\n最多 3 次"),
+            ("并行", "多任务同时跑、最后合并",
+             "30 条规则各自评分\n并行执行 → 结果汇总\n延迟从 O(n) 降到常数"),
+        ]
+        x0 = 1.5; y0 = 4.3; cw = 10.2; ch = 8.5; gap = 0.5
+        for i, (head, sub, ex) in enumerate(cases):
+            x = x0 + i * (cw + gap)
+            top = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0), Cm(cw), Cm(0.8))
+            top.fill.solid(); top.fill.fore_color.rgb = PRIMARY; top.line.fill.background()
+            body = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0 + 0.8), Cm(cw), Cm(ch - 0.8))
+            body.fill.solid(); body.fill.fore_color.rgb = WHITE
+            body.line.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
+            _txt(s, x + 0.3, y0 + 0.1, cw - 0.6, 0.7, head,
+                 size=15, bold=True, color=WHITE)
+            _txt(s, x + 0.4, y0 + 1.1, cw - 0.8, 1.5, sub,
+                 size=13, color=DARK)
+            _txt(s, x + 0.4, y0 + 3.5, cw - 0.8, 5, ex,
+                 size=12, color=GREY)
+
+        _txt(s, 1.5, 13.5, 31, 1,
+             "👉 LangGraph 把流程画成有向图，框架管 state、调度、并发、循环",
+             size=13, bold=True, color=ACCENT)
+        return s
+    builders.append(slide_7)
+
+    # 8. 02-2 核心组件 Node / Edge / State
+    def slide_8():
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "02", "核心组件：Node / Edge / State")
+        cards = [
+            ("Node 节点", "纯函数：state → 状态增量",
+             "可纯计算，也可调 LLM / 工具\n返回 dict 表示要更新的字段", PRIMARY),
+            ("Edge 边", "节点间的连接关系",
+             "固定边：A → B\n条件边：函数返回下一个节点名\nSend：动态 fan-out 到多个实例", ACCENT),
+            ("State 状态", "TypedDict + Reducer",
+             "跨节点共享，自动合并\nReducer 决定多个写入怎么聚合\n（覆盖 / 累加 / 自定义）", RGBColor(0x2E, 0x7D, 0x32)),
+        ]
+        x0 = 1.5; y0 = 3.5; cw = 10.2; ch = 6.5; gap = 0.5
+        for i, (head, lead, body, color) in enumerate(cards):
+            x = x0 + i * (cw + gap)
+            top = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0), Cm(cw), Cm(0.7))
+            top.fill.solid(); top.fill.fore_color.rgb = color; top.line.fill.background()
+            box = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y0 + 0.7), Cm(cw), Cm(ch - 0.7))
+            box.fill.solid(); box.fill.fore_color.rgb = WHITE
+            box.line.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
+            _txt(s, x + 0.3, y0 + 0.05, cw - 0.6, 0.7, head,
+                 size=14, bold=True, color=WHITE)
+            _txt(s, x + 0.4, y0 + 1, cw - 0.8, 1.2, lead,
+                 size=12, bold=True, color=color)
+            _txt(s, x + 0.4, y0 + 2.4, cw - 0.8, 4, body,
+                 size=11, color=DARK)
+
+        _txt(s, 1.5, 10.7, 31, 0.6, "最小可运行例子",
+             size=13, bold=True, color=DARK)
+        _code_block(s, 1.5, 11.5, 31, 6, """class State(TypedDict):
+    messages: list[str]
+
+def greet(state):
+    return {"messages": state["messages"] + ["hello"]}
+
+g = StateGraph(State)
+g.add_node("greet", greet)
+g.add_edge(START, "greet"); g.add_edge("greet", END)
+graph = g.compile()
+graph.invoke({"messages": []})    # → {"messages": ["hello"]}""", size=10)
+        return s
+    builders.append(slide_8)
+
+    # 9. 02-3 Reducer
+    def slide_9():
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "02", "State Reducer：并行写入的合并机制")
+        _txt(s, 1.5, 3, 31, 0.8,
+             "默认：多个节点写同一字段 → 后写覆盖前写（数据丢失）。"
+             "Reducer 解决这个问题。",
+             size=13, color=GREY)
+        _txt(s, 1.5, 4.5, 15, 0.6, "默认行为（覆盖）", size=13, bold=True, color=GREY)
+        _code_block(s, 1.5, 5.3, 15, 4, """class State(TypedDict):
+    deductions: list[dict]
+
+# 5 个并行 scorer 各自写 deductions
+# → 只有最后一个写入留下，前 4 个被覆盖""", size=11)
+
+        _txt(s, 17, 4.5, 15, 0.6, "用 Annotated[..., reducer]", size=13, bold=True, color=PRIMARY)
+        _code_block(s, 17, 5.3, 15, 4, """class State(TypedDict):
     deductions: Annotated[
         list[dict],
-        list_add_or_reset    # 自定义 reducer
+        list_add_or_reset,    # 自定义合并
     ]
-    fatal_triggers: Annotated[
-        list[dict], list_add_or_reset
-    ]""", font_size=11)
 
-        _add_text_box(s, 1.5, 8.2, 16, 0.6, "2. 自定义 reducer（支持 RESET 信号）", font_size=13, bold=True, color=PRIMARY)
-        _add_code_block(s, 1.5, 8.9, 16, 4, """def list_add_or_reset(left, right):
+def list_add_or_reset(left, right):
     if right is RESET:
-        return []                    # 清空
-    return (left or []) + (right or [])
+        return []                           # 重置
+    return (left or []) + (right or [])    # 累加""", size=10)
 
-# 重打分循环开头：
-return {"deductions": RESET, ...}""", font_size=11)
+        _txt(s, 1.5, 10.2, 31, 0.6, "在循环中怎么用",
+             size=13, bold=True, color=ACCENT)
+        _bullets(s, 1.5, 11, 31, 6, [
+            "scoring_dispatcher 进入新一轮时返回 {\"deductions\": RESET} → 清空",
+            "5 个并行 rule_scorer 各自 append → reducer 自动累加",
+            "auditor 看到完整列表，做整体判断",
+            "审核不通过 → 回到 dispatcher → 再次 RESET 开始下一轮",
+        ], size=12)
 
-        _add_text_box(s, 18.3, 3, 14, 0.6, "3. Send：动态 fan-out", font_size=13, bold=True, color=ACCENT)
-        _add_code_block(s, 18.3, 3.7, 14, 6, """def fan_out(state):
+        _txt(s, 1.5, 16.2, 31, 1,
+             "👉 LangGraph 内置 add_messages（消息列表自动追加）；其余字段用自定义 reducer",
+             size=12, bold=True, color=ACCENT)
+        return s
+    builders.append(slide_9)
+
+    # 10. 02-4 Send
+    def slide_10():
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "02", "Send：动态 fan-out / map-reduce 编排")
+        _txt(s, 1.5, 3, 31, 0.8,
+             "条件边返回 [Send(node, payload), ...] → 启动 N 个并行实例",
+             size=13, color=GREY)
+        _code_block(s, 1.5, 4.2, 17, 7, """from langgraph.types import Send
+
+def fan_out(state):
     return [
         Send("rule_scorer", {
             "rule": rule,
@@ -398,440 +537,259 @@ return {"deductions": RESET, ...}""", font_size=11)
         for rule in state["rules_json"]
     ]
 
-# 5 条规则 → 5 个 rule_scorer
-# 并行跑，结果通过 reducer 累加""", font_size=11)
-        _add_text_box(s, 18.3, 10.2, 14, 0.6, "4. Subgraph：模块化封装", font_size=13, bold=True, color=ACCENT)
-        _add_code_block(s, 18.3, 10.9, 14, 4, """sub = build_scoring_subgraph()
-parent.add_node(
-    "scoring_with_audit", sub
-)
-# 父子图共享同名 state 键""", font_size=11)
+g.add_conditional_edges("dispatcher", fan_out, ["rule_scorer"])
+# 5 条规则 → 5 个 rule_scorer 并行
+# 各自返回的 deductions 通过 reducer 合并""", size=11)
+
+        _txt(s, 19.5, 4.2, 13, 0.6, "执行模型",
+             size=13, bold=True, color=PRIMARY)
+        _bullets(s, 19.5, 5, 13, 6, [
+            "BFS 推进：当前层完成 → 下一层",
+            "Send 在条件边里返回 → 派多个实例",
+            "每个 Send 携带专属 payload",
+            "实例可以是同名节点的多个并行执行",
+            "下游边自动等待所有 Send 完成（fan-in）",
+        ], size=12)
+
+        _txt(s, 19.5, 11, 13, 0.6, "经典用例",
+             size=13, bold=True, color=ACCENT)
+        _bullets(s, 19.5, 11.8, 13, 4, [
+            "map-reduce：每条数据一个 worker",
+            "并行规则评估",
+            "多查询并发检索",
+        ], size=12)
         return s
+    builders.append(slide_10)
 
-    # ===== 7. 01-4 Middleware & Context Engineering =====
-    def slide_7():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "01", "Middleware & Context Engineering")
-        _add_text_box(s, 1.5, 3, 15, 0.8, "Middleware（横切关注点）", font_size=16, bold=True, color=PRIMARY)
-        _add_text_box(s, 1.5, 4.2, 15, 0.6, "在 LLM 调用前后插入逻辑，业务节点零侵入", font_size=12, color=GREY)
-        _add_bullets(s, 1.5, 5.3, 15, 6, [
-            "before_model：注入上下文 / PII 脱敏 / 权限校验",
-            "after_model：日志 / 成本统计 / 输出审查",
-            "wrap_model_call：完全包装（重试 / 缓存 / 故障切换）",
-            "在 LangGraph 里用 Runnable.with_listeners 或自建 helper",
-        ], font_size=12)
-
-        _add_text_box(s, 17, 3, 15, 0.8, "Context Engineering", font_size=16, bold=True, color=ACCENT)
-        _add_text_box(s, 17, 4.2, 15, 0.6, "重点不再是\"写提示词\"，而是\"设计上下文系统\"", font_size=12, color=GREY)
-        _add_bullets(s, 17, 5.3, 15, 6, [
-            "Prompt Engineering：单条 prompt 怎么写好",
-            "Context Engineering：怎么动态拼上下文",
-            "  · 历史压缩 / 摘要",
-            "  · 知识检索（RAG）",
-            "  · few-shot 示例注入",
-            "  · 结构化输出 schema",
-            "  · 工具描述与权限",
-        ], font_size=12)
-
-        _add_text_box(s, 1.5, 14.5, 30, 1,
-                      "👉 本周项目实战中的 with_structured_output / KB 检索 / 审核反馈，都是 Context Engineering",
-                      font_size=12, bold=True, color=ACCENT)
-        return s
-
-    # ===== 8. 02-1 业务背景 =====
-    def slide_8():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "项目背景：金融客服通话智能质检")
-        _add_text_box(s, 1.5, 3, 14, 0.8, "业务", font_size=14, bold=True, color=PRIMARY)
-        _add_bullets(s, 1.5, 4, 14, 5, [
-            "对客服-客户通话录音做合规、话术、态度多维度评分",
-            "原系统用 Dify 拼装：LLM 解析 + 规则 JSON + 扣分输出",
-            "目标：迁到 LangGraph，提高可解释性与可扩展性",
-        ], font_size=12)
-
-        _add_text_box(s, 1.5, 9.3, 14, 0.8, "评分维度", font_size=14, bold=True, color=PRIMARY)
-        _add_bullets(s, 1.5, 10.3, 14, 5, [
-            "T1 合规风险事项（fatal）",
-            "T2 服务态度（fatal）",
-            "T3 服务标准性及服务技巧",
-            "T4 业务水平",
-        ], font_size=12)
-
-        _add_text_box(s, 17, 3, 15, 0.8, "技术目标", font_size=14, bold=True, color=ACCENT)
-        _add_bullets(s, 17, 4, 15, 7, [
-            "保留原始对话文本，不清洗不拆分",
-            "问题提取 + KB 检索：客户问题 → 知识库参考答案",
-            "规则打分：循环最多 3 次",
-            "审核：3 次未通过 → 标记人工复核",
-            "输出：caps / deductions / hot_words / cost_summary",
-            "可扩展性：未来加新规则不改框架代码",
-        ], font_size=12)
-        return s
-
-    # ===== 9. 02-2 架构演进 =====
-    def slide_9():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "架构演进：从 6 节点线性 到 5 节点 + 子图")
-        _add_text_box(s, 1.5, 3, 15, 0.7, "v1 初始版本", font_size=14, bold=True, color=GREY)
-        _add_picture_safe(s, SHOTS / "初始图.png", 1.5, 3.8, width_cm=15)
-        _add_text_box(s, 17, 3, 15, 0.7, "v2 当前版本（含子图 + 并行）", font_size=14, bold=True, color=PRIMARY)
-        _add_picture_safe(s, SHOTS / "节点图.png", 17, 3.8, width_cm=15)
-
-        _add_text_box(s, 1.5, 14.3, 30, 0.8, "演进收益", font_size=13, bold=True, color=DARK)
-        _add_bullets(s, 1.5, 15.1, 30, 4, [
-            "scoring_loop ⇄ auditor 抽成子图 → 主图只看 5 步流水线",
-            "scoring_loop 拆成 dispatcher + 多个 rule_scorer + extraction → Send 并行",
-            "Studio 中子图可双击展开，调试更直观",
-        ], font_size=12)
-        return s
-
-    # ===== 10. 02-3 结构化输出 =====
-    def slide_10():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "核心①：with_structured_output 强类型 LLM 输出")
-        _add_text_box(s, 1.5, 3, 30, 0.8, "痛点：LLM 直接返回 JSON 字符串，json.loads 偶尔崩；偷懒返回空数组",
-                      font_size=12, color=GREY)
-        _add_text_box(s, 1.5, 4, 15, 0.6, "Pydantic schema", font_size=13, bold=True, color=PRIMARY)
-        _add_code_block(s, 1.5, 4.7, 15, 5.5, """class RuleScoringOutput(BaseModel):
-    deductions: list[Deduction]
-    fatal_triggers: list[FatalTrigger]
-
-class Deduction(BaseModel):
-    rule_id: str
-    severity: Literal["fatal","nonfatal"]
-    subtotal: int
-    evidence: list[Evidence]""", font_size=11)
-        _add_text_box(s, 17, 4, 15, 0.6, "节点调用", font_size=13, bold=True, color=PRIMARY)
-        _add_code_block(s, 17, 4.7, 15, 5.5, """def rule_scorer(payload):
-    parsed, usage = invoke_structured(
-        RuleScoringOutput,
-        [SystemMessage(_PROMPT),
-         HumanMessage(payload_json)],
-        node_name="rule_scorer",
-    )
-    return {"deductions": ..., "llm_usage": [usage]}""", font_size=11)
-        _add_text_box(s, 1.5, 10.8, 30, 0.6, "实测对比（同一段对话）", font_size=13, bold=True, color=DARK)
-        rows = [
-            ("字段",          "raw JSON 解析",      "structured output"),
-            ("hot_words",     "[]（模型偷懒）",     "[基金, 招商, 白酒, ...]"),
-            ("business_words","[]",                 "[持仓查询]"),
-            ("should_say",    "[]",                 "[\"您好，招商基金...\"]"),
-        ]
-        cw = [6, 12, 12]
-        x = 1.5; y = 11.7
-        for ri, row in enumerate(rows):
-            cx = x
-            for ci, cell in enumerate(row):
-                rect = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(cx), Cm(y + ri * 0.95), Cm(cw[ci]), Cm(0.95))
-                if ri == 0:
-                    rect.fill.solid(); rect.fill.fore_color.rgb = PRIMARY; rect.line.fill.background()
-                    color = WHITE; bold = True
-                else:
-                    rect.fill.solid()
-                    rect.fill.fore_color.rgb = WHITE if ri % 2 else LIGHT_GREY
-                    rect.line.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
-                    color = DARK; bold = (ci == 0)
-                tf = rect.text_frame
-                tf.margin_left = Cm(0.2); tf.margin_top = Cm(0.1); tf.margin_bottom = Cm(0.1)
-                p = tf.paragraphs[0]
-                run = p.add_run()
-                run.text = cell
-                run.font.name = "微软雅黑"
-                run.font.size = Pt(11); run.font.bold = bold
-                run.font.color.rgb = color
-                cx += cw[ci]
-        return s
-
-    # ===== 11. 02-4 Send 并行 =====
+    # 11. 02-5 Subgraph
     def slide_11():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "核心②：Send 并行打分 + State Reducer")
-        _add_text_box(s, 1.5, 3, 30, 0.8, "痛点：30 条规则塞一个 LLM 调用 → prompt 太长、漏判、延迟 O(n)",
-                      font_size=12, color=GREY)
-        _add_code_block(s, 1.5, 4, 19, 7, """# scoring_dispatcher: 重置 + fan-out
-def scoring_dispatcher(state):
-    return {"deductions": RESET, "fatal_triggers": RESET}
-
-def fan_out(state):
-    sends = [Send("rule_scorer", {"rule": r, ...})
-             for r in state["rules_json"]]
-    sends.append(Send("extraction_node", {...}))
-    return sends
-
-# rule_scorer × N 并行写 deductions（reducer 累加）
-# extraction_node 并行抽 hot_words / should_say
-# 所有 Send 完成 → 自动 fan-in 到 auditor""", font_size=11)
-        _add_text_box(s, 21.5, 4, 11, 0.6, "性能", font_size=13, bold=True, color=PRIMARY)
-        rows = [
-            ("规则数",  "原方案",   "Send 并行"),
-            ("1",       "10 s",     "12 s"),
-            ("5",       "~10 s",    "12.5 s"),
-            ("30 (估)", "30-60 s",  "~13-15 s"),
-        ]
-        cw = [3.5, 3.7, 3.8]
-        x = 21.5; y = 4.8
-        for ri, row in enumerate(rows):
-            cx = x
-            for ci, cell in enumerate(row):
-                rect = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(cx), Cm(y + ri * 1.0), Cm(cw[ci]), Cm(1.0))
-                if ri == 0:
-                    rect.fill.solid(); rect.fill.fore_color.rgb = PRIMARY; rect.line.fill.background()
-                    color = WHITE; bold = True
-                else:
-                    rect.fill.solid()
-                    rect.fill.fore_color.rgb = WHITE if ri % 2 else LIGHT_GREY
-                    rect.line.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
-                    color = DARK; bold = (ci == 0 or ri == 3)
-                tf = rect.text_frame
-                tf.margin_left = Cm(0.15); tf.margin_top = Cm(0.15)
-                p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
-                run = p.add_run(); run.text = cell
-                run.font.name = "微软雅黑"; run.font.size = Pt(11)
-                run.font.bold = bold; run.font.color.rgb = color
-                cx += cw[ci]
-
-        _add_text_box(s, 21.5, 9.5, 11, 4,
-                      "规则越多，并行收益越大；\n每个 scorer prompt 短了，\n准确度也提升（不会因\ncontext 太长丢规则）",
-                      font_size=11, color=DARK)
-
-        _add_text_box(s, 1.5, 12, 30, 0.6, "Reducer 解决的关键问题",
-                      font_size=13, bold=True, color=ACCENT)
-        _add_bullets(s, 1.5, 12.8, 30, 4, [
-            "默认行为：多个并行节点写同一字段 → 后写覆盖前写（数据丢失）",
-            "Annotated[list, list_add_or_reset]：自动 append；遇 RESET 标志清空",
-            "审核未通过回到 dispatcher → RESET 让本轮从头累加，不污染历史",
-        ], font_size=12)
-        return s
-
-    # ===== 12. 02-5 Subgraph =====
-    def slide_12():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "核心③：Subgraph 抽取打分-审核闭环")
-        _add_text_box(s, 1.5, 3, 30, 0.8,
-                      "把 scoring_dispatcher → rule_scorer × N → auditor 这一段封成子图",
-                      font_size=13, color=GREY)
-
-        _add_text_box(s, 1.5, 4, 15, 0.6, "主图（5 节点）", font_size=13, bold=True, color=PRIMARY)
-        _add_code_block(s, 1.5, 4.7, 15, 6, """def build_graph():
-    g = StateGraph(GraphState)
-    g.add_node("input", input_node)
-    g.add_node("question_extractor", ...)
-    g.add_node("knowledge_retriever", ...)
-    g.add_node(
-        "scoring_with_audit",
-        build_scoring_subgraph()    # ← 子图作节点
-    )
-    g.add_node("aggregator", aggregator)""", font_size=11)
-
-        _add_text_box(s, 17, 4, 15, 0.6, "子图（4 节点 + 循环）", font_size=13, bold=True, color=ACCENT)
-        _add_code_block(s, 17, 4.7, 15, 6, """def build_scoring_subgraph():
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "02", "Subgraph：模块化封装")
+        _txt(s, 1.5, 3, 31, 0.8,
+             "把一组节点编译成单元，作为父图的一个 \"节点\" 使用",
+             size=13, color=GREY)
+        _code_block(s, 1.5, 4.2, 18, 7, """def build_scoring_subgraph():
     g = StateGraph(GraphState)
     g.add_node("scoring_dispatcher", ...)
     g.add_node("rule_scorer", rule_scorer)
-    g.add_node("extraction_node", ...)
     g.add_node("auditor", auditor)
-    # 内部循环 + Send fan-out
-    return g.compile()""", font_size=11)
+    # 内部循环
+    g.add_conditional_edges("auditor", route_audit, ...)
+    return g.compile()
 
-        _add_text_box(s, 1.5, 11.5, 30, 0.6, "收益", font_size=13, bold=True, color=DARK)
-        _add_bullets(s, 1.5, 12.3, 30, 6, [
-            "主图清晰：从外面看就是一条直线流水线，循环细节封在内部",
-            "可独立测试：build_scoring_subgraph() 可单独 compile + 单测",
-            "可复用：同样的 \"draft + critique 循环\" 模式可用在其他地方",
-            "Studio 可视化：子图节点可双击展开，调试更友好",
-            "状态自动透传：父子图共享 GraphState，零 plumbing 代码",
-        ], font_size=12)
+# 主图把子图当作普通节点
+parent.add_node("scoring_with_audit", build_scoring_subgraph())""", size=11)
+
+        _txt(s, 20.5, 4.2, 12, 0.6, "为什么要抽 Subgraph",
+             size=13, bold=True, color=PRIMARY)
+        _bullets(s, 20.5, 5, 12, 8, [
+            "主图保持简洁：从外面看就是一条流水线",
+            "可独立测试：单独 compile + 单测",
+            "可复用：同一个 \"draft + critique\" 模式用在多处",
+            "Studio 可视化：双击展开内部",
+            "状态自动透传：父子图共享同名 state 键",
+        ], size=11)
+
+        _txt(s, 1.5, 12.5, 31, 0.6, "状态合并规则",
+             size=13, bold=True, color=ACCENT)
+        _bullets(s, 1.5, 13.3, 31, 3, [
+            "父子图共用 GraphState：同名 TypedDict 键自动对齐，不需要任何 plumbing",
+            "子图返回的状态增量按父图的 reducer 合并到父状态",
+            "子图内部状态不污染父图，封装边界清晰",
+        ], size=12)
         return s
+    builders.append(slide_11)
 
-    # ===== 13. 02-6 Middleware: PII =====
+    # 12. 02-6 项目案例：架构演进
+    def slide_12():
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "02", "项目案例：通话质检系统架构演进")
+        _txt(s, 1.5, 3, 15, 0.7, "v1：6 节点线性 + 反馈边", size=13, bold=True, color=GREY)
+        _pic(s, SHOTS / "初始图.png", 1.5, 3.8, w=15)
+        _txt(s, 17, 3, 15, 0.7, "v2：5 节点 + 子图 + 并行", size=13, bold=True, color=PRIMARY)
+        _pic(s, SHOTS / "节点图.png", 17, 3.8, w=15)
+
+        _txt(s, 1.5, 14.3, 31, 0.7, "演进路径",
+             size=13, bold=True, color=DARK)
+        _bullets(s, 1.5, 15.1, 31, 4, [
+            "scoring_loop ⇄ auditor 抽成 subgraph → 主图变 5 节点流水线",
+            "subgraph 内 scoring_loop 拆成 dispatcher + 多 rule_scorer + extraction → Send 并行",
+            "5 规则评分延迟：~10s → 12.5s（含 fan-out 开销，30 规则估算 13-15s）",
+        ], size=12)
+        return s
+    builders.append(slide_12)
+
+    # ============================================================
+    # 模块 03：Context Engineering & LangSmith（5 页）
+    # ============================================================
+
+    # 13. 03-1 Prompt → Context Engineering
     def slide_13():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "核心④：Middleware - PII 脱敏（合规刚需）")
-        _add_text_box(s, 1.5, 3, 30, 0.8,
-                      "金融通话含手机号 / 身份证 / 银行卡 / 地址，进 LLM 前必须脱敏",
-                      font_size=12, color=GREY)
-
-        _add_text_box(s, 1.5, 4, 15, 0.6, "middleware/pii.py", font_size=13, bold=True, color=PRIMARY)
-        _add_code_block(s, 1.5, 4.7, 15, 6.5, """_PATTERNS = [
-    (re.compile(r"\\b[\\w.+-]+@[\\w-]+\\.[\\w.-]+\\b"),
-     "[EMAIL]"),
-    (re.compile(r"\\b\\d{17}[\\dXx]\\b"),
-     "[ID_CARD]"),
-    (re.compile(r"(?<!\\d)1[3-9]\\d{9}(?!\\d)"),
-     "[PHONE]"),
-    (re.compile(r"[一-龥]{2,}(?:路|街|巷)\\d+号..."),
-     "[ADDRESS]"),
-]
-def redact_pii(text):
-    for p, r in _PATTERNS:
-        text = p.sub(r, text)
-    return text""", font_size=11)
-
-        _add_text_box(s, 17, 4, 15, 0.6, "在 input_node 一次性应用", font_size=13, bold=True, color=ACCENT)
-        _add_code_block(s, 17, 4.7, 15, 4, """def input_node(state):
-    return {
-        "conversation": redact_pii(
-            state["conversation"]
-        ),
-        ...
-    }""", font_size=11)
-
-        _add_text_box(s, 17, 9.3, 15, 0.6, "效果", font_size=13, bold=True, color=ACCENT)
-        _add_bullets(s, 17, 10, 15, 5, [
-            "下游所有节点（含 LLM）只看 [PHONE] [ID_CARD]",
-            "evidence.text 引用对话也是脱敏版",
-            "对外输出报告天然合规",
-        ], font_size=11)
-
-        _add_text_box(s, 1.5, 14, 30, 0.8,
-                      "👉 业务节点零侵入：input_node 加一行调用，全链路自动脱敏",
-                      font_size=12, bold=True, color=ACCENT)
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "03", "从 Prompt Engineering 到 Context Engineering")
+        _txt(s, 1.5, 3, 31, 0.8,
+             "重点不再是 \"把一句话写好\"，而是 \"动态拼出最适合当前任务的上下文\"",
+             size=13, color=GREY)
+        _table(s, 1.5, 4.2, [10, 11, 11], [
+            ["", "Prompt Engineering", "Context Engineering"],
+            ["关注点",   "单条 prompt 怎么写",       "上下文系统怎么设计"],
+            ["手段",     "措辞 / few-shot / 角色扮演", "检索 / 摘要 / 工具描述 / schema 注入"],
+            ["可改性",   "改 prompt 字符串",          "改架构（节点 / state / 检索器）"],
+            ["产出",     "一条好的 prompt",           "一个能持续供给好上下文的系统"],
+        ], row_h=1.4)
+        _txt(s, 1.5, 13.5, 31, 1.2,
+             "👉 Andrej Karpathy：\"软件 3.0 不是写代码，是工程化地构造模型上下文\"",
+             size=13, bold=True, color=ACCENT)
         return s
+    builders.append(slide_13)
 
-    # ===== 14. 02-7 成本追踪 =====
+    # 14. 03-2 上下文设计的几个层次
     def slide_14():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "02", "核心⑤：成本追踪（每个节点的 token 与花费）")
-        _add_text_box(s, 1.5, 3, 30, 0.8,
-                      "include_raw=True 拿 AIMessage.usage_metadata，list reducer 累加",
-                      font_size=12, color=GREY)
-        _add_picture_safe(s, SHOTS / "成本计算.png", 1.5, 4, width_cm=20)
-        _add_text_box(s, 22.5, 4, 10, 0.7, "看到了什么", font_size=13, bold=True, color=PRIMARY)
-        _add_bullets(s, 22.5, 5, 10, 7, [
-            "rule_scorer 5 次并行调用",
-            "question_extractor 跑了 2 次（隐藏成本）",
-            "9 次 LLM 共 15K input + 1.1K output tokens",
-            "单通成本 $0.0024（DeepSeek）",
-            "可推算月成本上限",
-        ], font_size=11)
-        _add_text_box(s, 22.5, 12.3, 10, 2,
-                      "👉 量化是优化的前提",
-                      font_size=14, bold=True, color=ACCENT)
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "03", "上下文设计的几个层次")
+        layers = [
+            ("结构化输出", "with_structured_output(Schema)", PRIMARY,
+             "用 Pydantic schema 约束 LLM 返回\n避免 \"模型偷懒返回空数组\"\n本周项目实测：hot_words 从 [] → 5 个高价值词"),
+            ("知识检索", "RAG / KB lookup", ACCENT,
+             "从向量库 / 关键词库取参考答案\n注入进 prompt 给模型比对\n本周项目：客户问题 → KB 查 → 答非所问扣 rule 17"),
+            ("Few-shot 示例", "动态注入历史好/坏例子", RGBColor(0x2E, 0x7D, 0x32),
+             "对 LLM 来说，\"看过几个对的就更会了\"\n可从过去 trace / golden set 里采样\n下周可加：从 Evals 失败例子注入反例"),
+            ("反馈循环", "审核结果回馈给打分", RGBColor(0xEF, 0x6C, 0x00),
+             "上一轮的 audit_issues → 当前轮的 input\n让模型 \"知道自己上次哪儿错了\"\n本周项目：scoring 重试时收到 issues"),
+        ]
+        x0 = 1.5; y0 = 3.5; cw = 30; rh = 2.7
+        for i, (head, code, color, body) in enumerate(layers):
+            y = y0 + i * (rh + 0.15)
+            bar = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x0), Cm(y), Cm(0.4), Cm(rh))
+            bar.fill.solid(); bar.fill.fore_color.rgb = color; bar.line.fill.background()
+            _txt(s, x0 + 0.7, y + 0.1, 12, 0.8, head, size=14, bold=True, color=color)
+            _txt(s, x0 + 0.7, y + 0.95, 12, 0.6, code,
+                 size=11, color=GREY, font_name="Consolas")
+            _txt(s, x0 + 13, y + 0.1, cw - 13, rh, body, size=11, color=DARK)
         return s
+    builders.append(slide_14)
 
-    # ===== 15. 03-1 Tracing =====
+    # 15. 03-3 LangSmith Tracing
     def slide_15():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "03", "LangSmith Tracing：每次调用全链路可视化")
-        _add_picture_safe(s, SHOTS / "追踪.png", 1.5, 3, width_cm=22)
-        _add_text_box(s, 24.5, 3.3, 9, 0.7, "Trace 视图特点", font_size=13, bold=True, color=PRIMARY)
-        _add_bullets(s, 24.5, 4.2, 9, 6, [
-            "完整调用树：每个节点 / 每次 LLM",
-            "Waterfall 时间线：哪个慢一目了然",
-            "input / output / usage 全可看",
-            "失败 trace 标红，可重放",
-            "支持搜索、过滤、分组",
-        ], font_size=11)
-        _add_text_box(s, 24.5, 11, 9, 0.7, "如何接入", font_size=13, bold=True, color=ACCENT)
-        _add_bullets(s, 24.5, 11.9, 9, 4, [
-            ".env 配 4 个变量",
-            "LangChain ChatOpenAI 自动上传",
-            "无需写一行追踪代码",
-        ], font_size=11)
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "03", "LangSmith Tracing：可观测性的基础")
+        _txt(s, 1.5, 3, 31, 0.7,
+             ".env 设 4 个变量，LangChain 自动上传每次调用，零代码",
+             size=13, color=GREY)
+        _pic(s, SHOTS / "追踪.png", 1.5, 3.9, w=22)
+        _txt(s, 24.5, 4, 8.5, 0.7, "Trace 视图能看到", size=13, bold=True, color=PRIMARY)
+        _bullets(s, 24.5, 4.9, 8.5, 8, [
+            "完整调用树：每个节点 / LLM",
+            "Waterfall 时间线",
+            "input / output / token 用量",
+            "失败 trace 标红可重放",
+            "支持搜索 / 过滤 / 分组",
+        ], size=11)
+        _txt(s, 24.5, 12, 8.5, 0.7, "用法", size=13, bold=True, color=ACCENT)
+        _bullets(s, 24.5, 12.8, 8.5, 4, [
+            "LANGCHAIN_TRACING_V2=true",
+            "LANGCHAIN_API_KEY=lsv2_...",
+            "LANGCHAIN_PROJECT=name",
+        ], size=10)
         return s
+    builders.append(slide_15)
 
-    # ===== 16. 03-2 Evals + 黄金数据集 =====
+    # 16. 03-4 Evals
     def slide_16():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "03", "Evals 回归：黄金数据集 + 自动评估器")
-        _add_text_box(s, 1.5, 3, 30, 0.7,
-                      "改 prompt 后\"感觉变好了\" → \"rule_match 从 75% → 92%\" 的转变",
-                      font_size=12, color=GREY)
-        _add_picture_safe(s, SHOTS / "黄金数据库和实验.png", 1.5, 3.9, width_cm=15)
-        _add_picture_safe(s, SHOTS / "柱状图.png", 17, 3.9, width_cm=15)
-        _add_text_box(s, 1.5, 12.3, 15, 0.7, "黄金数据集（4 类例子）", font_size=12, bold=True, color=PRIMARY)
-        _add_bullets(s, 1.5, 13, 15, 4, [
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "03", "LangSmith Evals：从 \"感觉变好\" 到指标")
+        _txt(s, 1.5, 3, 31, 0.7,
+             "黄金数据集 + 评估器 + 实验对比 = 改 prompt 的回归保险",
+             size=13, color=GREY)
+        _pic(s, SHOTS / "黄金数据库和实验.png", 1.5, 4, w=15)
+        _pic(s, SHOTS / "柱状图.png", 17, 4, w=15)
+
+        _txt(s, 1.5, 12.5, 15, 0.7, "黄金数据集（4 个例子）",
+             size=12, bold=True, color=PRIMARY)
+        _bullets(s, 1.5, 13.2, 15, 4, [
             "clean_compliant：合规通话",
             "missing_greeting：缺话术",
             "fatal_guarantee：致命违规",
             "kb_mismatch：答非所问",
-        ], font_size=11)
-        _add_text_box(s, 17, 12.3, 15, 0.7, "4 个评估器（baseline 实测）", font_size=12, bold=True, color=ACCENT)
-        _add_bullets(s, 17, 13, 15, 4, [
+        ], size=11)
+
+        _txt(s, 17, 12.5, 15, 0.7, "4 个评估器（baseline 实测）",
+             size=12, bold=True, color=ACCENT)
+        _bullets(s, 17, 13.2, 15, 4, [
             "rule_match: 75%（Jaccard 命中）",
-            "fatal_correctness: 75% (精确)",
+            "fatal_correctness: 75%（精确）",
             "score_in_range: 100%",
             "review_match: 100%",
-        ], font_size=11)
+        ], size=11)
         return s
+    builders.append(slide_16)
 
-    # ===== 17. 03-3 Studio + Platform 部署 =====
+    # 17. 03-5 Studio + Platform
     def slide_17():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "03", "Studio 调试 + Platform 一键部署")
-        _add_text_box(s, 1.5, 3, 15, 0.7, "本地 Studio（langgraph dev）", font_size=13, bold=True, color=PRIMARY)
-        _add_picture_safe(s, SHOTS / "节点图.png", 1.5, 3.8, width_cm=15)
-        _add_text_box(s, 17, 3, 15, 0.7, "Platform Deployment", font_size=13, bold=True, color=ACCENT)
-        _add_picture_safe(s, SHOTS / "部署.png", 17, 3.8, width_cm=15)
-        _add_text_box(s, 1.5, 14, 30, 0.6, "工作流", font_size=13, bold=True, color=DARK)
-        _add_bullets(s, 1.5, 14.7, 30, 4, [
-            "本地：langgraph dev → Studio 浏览器调试，节点图实时展开 / 重放",
-            "线上：langgraph.json 配置好 → Push GitHub → LangSmith Platform 一键部署成 HTTPS API",
-            "环境变量在 Platform UI 配（DEEPSEEK_API_KEY 等）",
-        ], font_size=12)
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "03", "Studio 调试 + Platform 一键部署")
+        _txt(s, 1.5, 3, 15, 0.7, "Studio（langgraph dev）",
+             size=13, bold=True, color=PRIMARY)
+        _pic(s, SHOTS / "节点图.png", 1.5, 3.8, w=15)
+        _txt(s, 17, 3, 15, 0.7, "Platform 部署",
+             size=13, bold=True, color=ACCENT)
+        _pic(s, SHOTS / "部署.png", 17, 3.8, w=15)
+        _txt(s, 1.5, 14.3, 31, 0.7, "工作流", size=13, bold=True, color=DARK)
+        _bullets(s, 1.5, 15.1, 31, 4, [
+            "本地 langgraph dev → 浏览器打开 Studio，节点图实时展开 / 重放 / 单步",
+            "推到 GitHub → LangSmith Platform 一键部署成 HTTPS API + 持久 thread",
+            "环境变量在 Platform UI 配置（DEEPSEEK_API_KEY 等）",
+        ], size=12)
         return s
+    builders.append(slide_17)
 
-    # ===== 18. 03-4 Claude Code 辅助 =====
+    # ============================================================
+    # 18. 总结
+    # ============================================================
+
     def slide_18():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "03", "彩蛋：整个项目用 Claude Code 协作完成")
-        _add_picture_safe(s, SHOTS / "claude工作.png", 1.5, 3, width_cm=18)
-        _add_text_box(s, 20.5, 3, 12, 0.7, "用 AI 写 AI 系统的体感", font_size=13, bold=True, color=PRIMARY)
-        _add_bullets(s, 20.5, 4, 12, 8, [
-            "需求 → 项目骨架：30 分钟",
-            "增量重构（结构化输出 → Send 并行 → Subgraph）：每次 ~1 小时",
-            "Middleware（PII + 成本）零侵入加上去",
-            "Evals 黄金数据集 + 评估器代码全自动",
-            "Bug 现场调试：贴报错就能定位",
-        ], font_size=11)
-        _add_text_box(s, 20.5, 12, 12, 1,
-                      "👉 第 3 周分享主题：Claude Agent SDK & MCP",
-                      font_size=12, bold=True, color=ACCENT)
-        return s
+        s = _new_slide(prs, content_layout)
+        _section_header(s, "结", "总结与下周方向")
+        _txt(s, 1.5, 3, 15, 0.8, "本周关键认知", size=15, bold=True, color=PRIMARY)
+        _bullets(s, 1.5, 4.2, 15, 9, [
+            "create_agent 解决单 Agent 标准模式",
+            "复杂流程要靠 LangGraph 显式编排",
+            "Send + Reducer + Subgraph 是并行编排三件套",
+            "Middleware 抽走横切关注点（合规 / 成本）",
+            "Context Engineering ＞ Prompt Engineering",
+            "LangSmith 三件套补齐工程化（Trace / Evals / Platform）",
+            "概念都已在质检项目验证过",
+        ], size=12)
 
-    # ===== 19. 总结 =====
-    def slide_19():
-        s = prs.slides.add_slide(title_layout)
-        _add_section_header(s, "结", "总结与下周方向")
-        _add_text_box(s, 1.5, 3, 15, 0.8, "本周关键收获", font_size=15, bold=True, color=PRIMARY)
-        _add_bullets(s, 1.5, 4.2, 15, 8, [
-            "LangGraph 适合需要分支 / 循环 / 并行的复杂流程",
-            "Send + State Reducer 是并行编排的核心",
-            "Subgraph 把循环逻辑封装，主图保持简洁",
-            "Middleware 解决合规与成本两大横切问题",
-            "with_structured_output 让 LLM 输出强类型可靠",
-            "LangSmith 三件套（Trace + Evals + Platform）补齐工程化",
-            "Context Engineering 比 Prompt Engineering 更上层",
-        ], font_size=12)
-
-        _add_text_box(s, 17.5, 3, 15, 0.8, "下周方向", font_size=15, bold=True, color=ACCENT)
-        _add_bullets(s, 17.5, 4.2, 15, 6, [
+        _txt(s, 17.5, 3, 15, 0.8, "下周预告：第 3 周", size=15, bold=True, color=ACCENT)
+        _bullets(s, 17.5, 4.2, 15, 7, [
             "Skills 模块化与 anthropics/skills 仓库",
             "MCP（Model Context Protocol）协议",
-            "Tools 规模化：把质检 KB 包成 MCP server",
-            "Agent SDK 与 Subagent 调度机制",
-            "可能的实验：把 KB 检索从本地 JSON 升级成向量库",
-        ], font_size=12)
+            "Tools 规模化：质检 KB → MCP server",
+            "Claude Agent SDK 与 Subagent 调度",
+            "可选实验：把本地 KB 升级成向量库",
+        ], size=12)
 
-        _add_text_box(s, 1.5, 14, 30, 1.5,
-                      "项目仓库：github.com/wensl121/ai-call-quality",
-                      font_size=14, bold=True, color=DARK)
-        _add_text_box(s, 1.5, 15.2, 30, 1,
-                      "8 个 commit，2000+ 行代码 / prompt / 测试，11 个单测全过",
-                      font_size=12, color=GREY)
+        _txt(s, 1.5, 14.5, 31, 1, "项目仓库",
+             size=13, bold=True, color=DARK)
+        _txt(s, 1.5, 15.4, 31, 0.8,
+             "github.com/wensl121/ai-call-quality",
+             size=13, color=ACCENT, font_name="Consolas")
+        _txt(s, 1.5, 16.4, 31, 0.7,
+             "11 个 commit · 11 测试全过 · LangSmith Platform 部署可用",
+             size=11, color=GREY)
         return s
+    builders.append(slide_18)
 
-    builders = [slide_1, slide_2, slide_3, slide_4, slide_5, slide_6,
-                slide_7, slide_8, slide_9, slide_10, slide_11, slide_12,
-                slide_13, slide_14, slide_15, slide_16, slide_17, slide_18, slide_19]
-
+    # 生成所有
+    total = len(builders)
     for i, fn in enumerate(builders):
         slide = fn()
-        if i > 0:  # 封面不要页码
-            _add_footer(slide, i + 1, len(builders))
+        if i > 0:
+            _footer_pageno(slide, i + 1, total)
 
     prs.save(str(OUT))
-    print(f"[done] saved: {OUT}  ({len(builders)} slides)")
+    print(f"[done] {OUT}  ({total} slides)")
 
 
 if __name__ == "__main__":
