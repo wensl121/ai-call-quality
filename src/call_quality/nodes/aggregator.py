@@ -45,6 +45,44 @@ def _sorted_words(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(words, key=lambda w: int(w.get("count", 0)), reverse=True)
 
 
+def _summarize_cost(usage_records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not usage_records:
+        return {
+            "total_calls": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "by_node": {},
+        }
+    by_node: dict[str, dict[str, Any]] = {}
+    total_in = total_out = 0
+    total_cost = 0.0
+    for r in usage_records:
+        node = r.get("node", "unknown")
+        slot = by_node.setdefault(
+            node,
+            {"calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0},
+        )
+        slot["calls"] += 1
+        slot["input_tokens"] += int(r.get("input_tokens", 0))
+        slot["output_tokens"] += int(r.get("output_tokens", 0))
+        slot["estimated_cost_usd"] += float(r.get("estimated_cost_usd", 0.0))
+        total_in += int(r.get("input_tokens", 0))
+        total_out += int(r.get("output_tokens", 0))
+        total_cost += float(r.get("estimated_cost_usd", 0.0))
+    for slot in by_node.values():
+        slot["estimated_cost_usd"] = round(slot["estimated_cost_usd"], 6)
+    return {
+        "total_calls": len(usage_records),
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_tokens": total_in + total_out,
+        "estimated_cost_usd": round(total_cost, 6),
+        "by_node": by_node,
+    }
+
+
 def aggregator(state: GraphState) -> GraphState:
     deductions = state.get("deductions", [])
     fatal_triggers = state.get("fatal_triggers", [])
@@ -73,5 +111,6 @@ def aggregator(state: GraphState) -> GraphState:
         "should_not_say": state.get("should_not_say", []),
         "requires_human_review": state.get("requires_human_review", False),
         "review_reason": state.get("review_reason"),
+        "cost_summary": _summarize_cost(state.get("llm_usage", [])),
     }
     return {"result": result}

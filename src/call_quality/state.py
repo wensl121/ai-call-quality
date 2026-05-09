@@ -66,3 +66,6 @@ class GraphState(TypedDict, total=False):
     result: dict[str, Any]
     requires_human_review: bool
     review_reason: str
+
+    # === 成本追踪（每次 LLM 调用追加一条） ===
+    llm_usage: Annotated[list[dict[str, Any]], list_add_or_reset]

@@ -9,7 +9,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm import get_chat_model
+from ..llm import invoke_structured
 from ..schemas import AuditOutput
 from ..state import GraphState
 
@@ -71,9 +71,10 @@ def auditor(state: GraphState) -> GraphState:
         "rules_json": state["rules_json"],
         "main_result": _build_main_result(state),
     }
-    llm = get_chat_model().with_structured_output(AuditOutput, method="function_calling")
-    verdict: AuditOutput = llm.invoke(
-        [SystemMessage(_PROMPT), HumanMessage(json.dumps(payload, ensure_ascii=False))]
+    verdict, usage = invoke_structured(
+        AuditOutput,
+        [SystemMessage(_PROMPT), HumanMessage(json.dumps(payload, ensure_ascii=False))],
+        node_name="auditor",
     )
 
     issues = [i.model_dump() for i in verdict.issues]
@@ -88,6 +89,7 @@ def auditor(state: GraphState) -> GraphState:
             "review_reason": (
                 f"审核连续 {attempts} 次未通过：{'; '.join(verdict.reasons) or '存在 issues'}"
             ),
+            "llm_usage": [usage],
         }
 
     return {
@@ -95,4 +97,5 @@ def auditor(state: GraphState) -> GraphState:
         "audit_attempts": attempts,
         "audit_reasons": verdict.reasons,
         "audit_issues": issues,
+        "llm_usage": [usage],
     }

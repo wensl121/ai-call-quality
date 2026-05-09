@@ -5,7 +5,7 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm import get_chat_model
+from ..llm import invoke_structured
 from ..schemas import ExtractedQuestions
 from ..state import GraphState
 
@@ -15,8 +15,12 @@ _PROMPT = (Path(__file__).parent.parent / "prompts" / "extract_questions.txt").r
 
 
 def question_extractor(state: GraphState) -> GraphState:
-    llm = get_chat_model().with_structured_output(ExtractedQuestions, method="function_calling")
-    result: ExtractedQuestions = llm.invoke(
-        [SystemMessage(_PROMPT), HumanMessage(state["conversation"])]
+    parsed, usage = invoke_structured(
+        ExtractedQuestions,
+        [SystemMessage(_PROMPT), HumanMessage(state["conversation"])],
+        node_name="question_extractor",
     )
-    return {"questions": [q.model_dump() for q in result.questions]}
+    return {
+        "questions": [q.model_dump() for q in parsed.questions],
+        "llm_usage": [usage],
+    }
