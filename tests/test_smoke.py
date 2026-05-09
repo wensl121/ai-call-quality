@@ -48,6 +48,39 @@ def test_pii_redaction_passthrough_safe_text():
     assert redact_pii(text) == text
 
 
+def test_evaluators_basic():
+    from evals.evaluators import (
+        fatal_correctness,
+        review_match,
+        rule_match,
+        score_in_range,
+    )
+
+    outputs = {
+        "result": {
+            "deductions": [{"rule_id": "7"}, {"rule_id": "17"}],
+            "fatal_triggers": [],
+            "totals": {"final_score": 94},
+            "requires_human_review": False,
+        }
+    }
+    expected = {
+        "deduction_rule_ids": ["7", "17"],
+        "fatal_rule_ids": [],
+        "final_score_min": 90,
+        "final_score_max": 96,
+        "requires_human_review": False,
+    }
+    assert rule_match(outputs, expected)["score"] == 1.0
+    assert fatal_correctness(outputs, expected)["score"] == 1.0
+    assert score_in_range(outputs, expected)["score"] == 1.0
+    assert review_match(outputs, expected)["score"] == 1.0
+
+    # 偏离预期
+    bad_expected = {**expected, "deduction_rule_ids": ["8"]}
+    assert rule_match(outputs, bad_expected)["score"] == 0.0
+
+
 def test_aggregator_cost_summary():
     import importlib
 

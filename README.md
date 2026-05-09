@@ -70,3 +70,24 @@ langgraph up           # 本地起服务
 `.env` 里填 `LANGCHAIN_API_KEY` 后，每次运行图都会上传 trace 到
 https://smith.langchain.com → project `ai-call-quality`，可看节点流转 + LLM 调用细节。
 
+## 回归测试（LangSmith Evals）
+
+`evals/golden_dataset.py` 是手工构造的黄金数据集，每条 example 测试一类行为
+（合规通话 / 缺话术 / 致命违规 / KB 答非所问）。`evals/evaluators.py`
+定义 4 个评估器：rule_match、fatal_correctness、score_in_range、review_match。
+
+工作流：
+
+```bash
+# 1) 一次性把数据集推到 LangSmith
+python scripts/upload_dataset.py
+
+# 2) 改 prompt / 改代码后跑回归
+python scripts/run_evals.py [experiment_prefix]
+# → 终端打印每个评估器平均分
+# → LangSmith UI 可看每条 example 的详细 diff
+```
+
+每次跑会创建一个新的 experiment，多个 experiment 可在 LangSmith 上对比，
+直接看出"改了 prompt 后 rule_match 从 75% 升到 90%"这种定量结论。
+
