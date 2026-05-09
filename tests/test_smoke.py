@@ -10,9 +10,10 @@ def test_graph_compiles():
 
 
 def test_aggregator_fatal_zeroes_score():
-    from call_quality.nodes.aggregator import aggregator
-    import call_quality.nodes.aggregator as agg_mod
+    import importlib
 
+    agg_mod = importlib.import_module("call_quality.nodes.aggregator")
+    aggregator = agg_mod.aggregator
     agg_mod._extract_hot_words = lambda _conv: ([], [])
 
     state = {
@@ -30,8 +31,9 @@ def test_aggregator_fatal_zeroes_score():
 
 
 def test_aggregator_caps_group_deduction():
-    from call_quality.nodes import aggregator as agg_mod
+    import importlib
 
+    agg_mod = importlib.import_module("call_quality.nodes.aggregator")
     agg_mod._extract_hot_words = lambda _conv: ([], [])
     state = {
         "call_id": "X",
