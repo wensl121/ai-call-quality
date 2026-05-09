@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "call_quality": "./src/call_quality/graph.py:graph"
+    "call_quality": "call_quality.graph:graph"
   },
   "env": ".env",
   "python_version": "3.11"
