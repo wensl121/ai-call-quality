@@ -20,12 +20,12 @@ def test_pii_redaction_phone_id_email():
     from call_quality.middleware import redact_pii
 
     text = (
-        "客服张三，手机号 13602828838，"
-        "身份证 110101199001011234，邮箱 abc@example.com"
+        "客服张三，手机号 13800001234，"
+        "身份证 110000200001012345，邮箱 abc@example.com"
     )
     out = redact_pii(text)
-    assert "13602828838" not in out
-    assert "110101199001011234" not in out
+    assert "13800001234" not in out
+    assert "110000200001012345" not in out
     assert "abc@example.com" not in out
     assert "[PHONE]" in out
     assert "[ID_CARD]" in out
@@ -35,7 +35,7 @@ def test_pii_redaction_phone_id_email():
 def test_pii_redaction_address():
     from call_quality.middleware import redact_pii
 
-    text = "客户地址在广州市番禺区新联路40号703房"
+    text = "客户地址在北京市朝阳区测试路1号101室"
     out = redact_pii(text)
     assert "新联路" not in out
     assert "[ADDRESS]" in out
