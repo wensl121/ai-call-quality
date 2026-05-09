@@ -1,22 +1,17 @@
-"""LangGraph 编排：节点 + 条件边。"""
+"""LangGraph 主图编排。
+
+5 个顶层节点：
+    input → question_extractor → knowledge_retriever → scoring_with_audit → aggregator
+
+`scoring_with_audit` 是一个子图，内部包含 scoring_loop ⇄ auditor 的迭代逻辑。
+"""
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from .nodes import (
-    aggregator,
-    auditor,
-    input_node,
-    knowledge_retriever,
-    question_extractor,
-    scoring_loop,
-)
+from .nodes import aggregator, input_node, knowledge_retriever, question_extractor
+from .scoring_subgraph import build_scoring_subgraph
 from .state import GraphState
-
-
-def _route_after_audit(state: GraphState) -> str:
-    """审核通过 → aggregator；不通过 → 回 scoring_loop（auditor 自身负责命中上限时切到通过）。"""
-    return "aggregator" if state.get("audit_passed") else "scoring_loop"
 
 
 def build_graph():
@@ -25,25 +20,17 @@ def build_graph():
     g.add_node("input", input_node)
     g.add_node("question_extractor", question_extractor)
     g.add_node("knowledge_retriever", knowledge_retriever)
-    g.add_node("scoring_loop", scoring_loop)
-    g.add_node("auditor", auditor)
+    g.add_node("scoring_with_audit", build_scoring_subgraph())
     g.add_node("aggregator", aggregator)
 
     g.add_edge(START, "input")
     g.add_edge("input", "question_extractor")
     g.add_edge("question_extractor", "knowledge_retriever")
-    g.add_edge("knowledge_retriever", "scoring_loop")
-    g.add_edge("scoring_loop", "auditor")
-
-    g.add_conditional_edges(
-        "auditor",
-        _route_after_audit,
-        {"scoring_loop": "scoring_loop", "aggregator": "aggregator"},
-    )
+    g.add_edge("knowledge_retriever", "scoring_with_audit")
+    g.add_edge("scoring_with_audit", "aggregator")
     g.add_edge("aggregator", END)
 
     return g.compile()
 
 
-# 模块级实例：langgraph.json / LangGraph Platform 部署时引用。
 graph = build_graph()

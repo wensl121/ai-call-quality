@@ -9,6 +9,13 @@ def test_graph_compiles():
     assert graph is not None
 
 
+def test_scoring_subgraph_compiles():
+    from call_quality.scoring_subgraph import build_scoring_subgraph
+
+    sub = build_scoring_subgraph()
+    assert sub is not None
+
+
 def test_aggregator_fatal_zeroes_score():
     import importlib
 
