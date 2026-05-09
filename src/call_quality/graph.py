@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from .nodes import aggregator, input_node, knowledge_retriever, question_extractor
-from .scoring_subgraph import build_scoring_subgraph
-from .state import GraphState
+from call_quality.nodes import aggregator, input_node, knowledge_retriever, question_extractor
+from call_quality.scoring_subgraph import build_scoring_subgraph
+from call_quality.state import GraphState
 
 
 def build_graph():

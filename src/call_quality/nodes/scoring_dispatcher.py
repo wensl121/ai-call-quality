@@ -10,7 +10,7 @@ from typing import Any
 
 from langgraph.types import Send
 
-from ..state import RESET, GraphState
+from call_quality.state import RESET, GraphState
 
 
 def scoring_dispatcher(state: GraphState) -> dict[str, Any]:

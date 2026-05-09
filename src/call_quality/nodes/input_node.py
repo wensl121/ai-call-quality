@@ -5,8 +5,8 @@
 """
 from __future__ import annotations
 
-from ..middleware import redact_pii
-from ..state import GraphState
+from call_quality.middleware import redact_pii
+from call_quality.state import GraphState
 
 
 def input_node(state: GraphState) -> GraphState:

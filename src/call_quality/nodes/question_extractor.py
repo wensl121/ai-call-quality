@@ -5,9 +5,9 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm import invoke_structured
-from ..schemas import ExtractedQuestions
-from ..state import GraphState
+from call_quality.llm import invoke_structured
+from call_quality.schemas import ExtractedQuestions
+from call_quality.state import GraphState
 
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "extract_questions.txt").read_text(
     encoding="utf-8"

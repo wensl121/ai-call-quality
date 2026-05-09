@@ -6,8 +6,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm import invoke_structured
-from ..schemas import ExtractionOutput
+from call_quality.llm import invoke_structured
+from call_quality.schemas import ExtractionOutput
 
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "extract_words.txt").read_text(
     encoding="utf-8"

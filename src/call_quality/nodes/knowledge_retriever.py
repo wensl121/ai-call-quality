@@ -1,8 +1,8 @@
 """知识检索节点：为每个问题查 KB，并尝试从对话里抽取客服的对应回答。"""
 from __future__ import annotations
 
-from .. import kb
-from ..state import GraphState
+from call_quality import kb
+from call_quality.state import GraphState
 
 
 def knowledge_retriever(state: GraphState) -> GraphState:

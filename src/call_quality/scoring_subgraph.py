@@ -13,11 +13,11 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from .nodes.auditor import auditor
-from .nodes.extraction import extraction_node
-from .nodes.rule_scorer import rule_scorer
-from .nodes.scoring_dispatcher import fan_out, scoring_dispatcher
-from .state import GraphState
+from call_quality.nodes.auditor import auditor
+from call_quality.nodes.extraction import extraction_node
+from call_quality.nodes.rule_scorer import rule_scorer
+from call_quality.nodes.scoring_dispatcher import fan_out, scoring_dispatcher
+from call_quality.state import GraphState
 
 
 def _route_after_audit(state: GraphState) -> str:

@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from ..state import GraphState
+from call_quality.state import GraphState
 
 _DEFAULT_GROUPS = [
     {"group_id": "T1", "name": "合规风险事项", "cap": 100, "type": "fatal"},

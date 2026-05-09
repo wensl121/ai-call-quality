@@ -7,8 +7,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm import invoke_structured
-from ..schemas import RuleScoringOutput
+from call_quality.llm import invoke_structured
+from call_quality.schemas import RuleScoringOutput
 
 _PROMPT = (Path(__file__).parent.parent / "prompts" / "score_rule.txt").read_text(encoding="utf-8")
 
