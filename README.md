@@ -88,6 +88,3 @@ python scripts/run_evals.py [experiment_prefix]
 # → LangSmith UI 可看每条 example 的详细 diff
 ```
 
-每次跑会创建一个新的 experiment，多个 experiment 可在 LangSmith 上对比，
-直接看出"改了 prompt 后 rule_match 从 75% 升到 90%"这种定量结论。
-
