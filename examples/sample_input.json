@@ -1,0 +1,26 @@
+{
+  "call_id": "11755",
+  "call_type": "voice",
+  "template_used": "voice_template",
+  "conversation": "00:00:00 角色1：8199号为您服务。\n00:00:05 角色2：你好，张姐姐，请问有什么可以这样子？\n00:00:10 角色1：我有一个基金，你们招商那个中的白酒我想赎回，但是我都不知道是在哪个渠道买的。\n00:00:36 角色2：好的，那就不打扰您了，祝您生活愉快，再见。",
+  "rules_json": [
+    {
+      "rule_id": 7,
+      "deduction_mode": {"description": "每出现一处扣2分，最多10分", "max_deduction": 10, "deduct_points": 2},
+      "scenarios": [
+        {
+          "check_scope": "客服说的话",
+          "type": "语义匹配检测",
+          "scenario_id": 11,
+          "required_checks": {"type": "应该说", "content": "标准开场语：您好，招商基金，请问有什么可以帮您？"}
+        },
+        {
+          "check_scope": "客服说的话",
+          "type": "语义匹配检测",
+          "scenario_id": 12,
+          "required_checks": {"type": "应该说", "content": "结束前应询问：请问还有什么可以帮到您？"}
+        }
+      ]
+    }
+  ]
+}
