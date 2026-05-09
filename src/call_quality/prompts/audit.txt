@@ -6,9 +6,14 @@
 - deductions：本轮打分给出的非致命扣分
 - fatal_triggers：本轮打分给出的致命触发
 
+系统隐式规则（不在 rules_json 中，但合法存在）：
+- rule_id="17"（业务差错）：当客服回答与知识库参考答案在语义上不符或明显偏离时命中。
+  group_id="T4"，severity=nonfatal，per_deduct=2，max_cap_in_rule=10，max_cap_in_group=40。
+  evidence 的 scenario_id 可为 0 或缺省。**不要因为 rules_json 里没有 rule 17 就判它无效。**
+
 复核要点：
 1. 每条 evidence 的 timestamp 是否能在 conversation 中对上。
-2. 扣分理由 text 是否有事实依据，且匹配命中的 scenario。
+2. 扣分理由 text 是否有事实依据，且匹配命中的 scenario（rule 17 除外，它对应 KB 比对）。
 3. subtotal 是否 = per_deduct × count，且不超过 max_cap_in_rule。
 4. fatal_triggers 是否确实命中规则；误判会让客户得 0 分，要严格核对。
 5. 是否有"满意度评价缺失""名字称呼缺失"等高频误扣（仅在确有依据时才保留）。
