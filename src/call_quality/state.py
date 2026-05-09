@@ -1,7 +1,4 @@
-"""LangGraph state 定义。
-
-state 在节点之间累积；用 TypedDict 让 LangGraph 能正确做浅合并。
-"""
+"""LangGraph state 定义。"""
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -22,10 +19,15 @@ class GraphState(TypedDict, total=False):
     # === 评分 ===
     deductions: list[dict[str, Any]]
     fatal_triggers: list[dict[str, Any]]
+    hot_words: list[dict[str, Any]]
+    business_words: list[dict[str, Any]]
+    should_say: list[dict[str, Any]]
+    should_not_say: list[dict[str, Any]]
 
     # === 审核 ===
     audit_passed: bool
-    audit_reason: str
+    audit_reasons: list[str]
+    audit_issues: list[dict[str, Any]]
     audit_attempts: int
 
     # === 最终输出 ===

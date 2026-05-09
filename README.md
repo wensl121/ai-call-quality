@@ -53,6 +53,20 @@ cp .env.example .env  # 填入 DEEPSEEK_API_KEY 等
 python examples/run_example.py
 ```
 
-## 状态
+## 部署到 LangGraph Platform
 
-骨架阶段：节点函数返回占位结构，LLM 调用与 KB 检索逻辑待补齐。
+```bash
+pip install -U langgraph-cli
+langgraph dev          # 本地起 LangGraph Studio（浏览器调试）
+langgraph build        # 构建 Docker 镜像
+langgraph up           # 本地起服务
+```
+
+`langgraph.json` 暴露的 graph 名是 `call_quality`，入口是
+`./src/call_quality/graph.py:graph`。
+
+## 可视化（LangSmith）
+
+`.env` 里填 `LANGCHAIN_API_KEY` 后，每次运行图都会上传 trace 到
+https://smith.langchain.com → project `ai-call-quality`，可看节点流转 + LLM 调用细节。
+

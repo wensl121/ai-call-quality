@@ -43,3 +43,7 @@ def build_graph():
     g.add_edge("aggregator", END)
 
     return g.compile()
+
+
+# 模块级实例：langgraph.json / LangGraph Platform 部署时引用。
+graph = build_graph()

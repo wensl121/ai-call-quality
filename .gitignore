@@ -15,3 +15,4 @@ build/
 dist/
 *.swp
 .DS_Store
+examples/last_run.json
